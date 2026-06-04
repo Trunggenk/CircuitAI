@@ -85,7 +85,7 @@ using namespace terrain;
  * Разрушать города,
  * Видеть в братьях мишени...
  */
-constexpr char version[]{"1.6.24"};
+constexpr char version[]{"1.6.25"};
 constexpr uint32_t VERSION_SAVE = 4;
 
 std::unique_ptr<CGameAttribute> CCircuitAI::gameAttribute(nullptr);
@@ -574,7 +574,8 @@ int CCircuitAI::Init(int skirmishAIId, const struct SSkirmishAICallback* sAICall
 	const std::string profile = InitOptions();  // Inits GameAttribute
 	scriptManager = std::make_shared<CScriptManager>(this);
 	setupManager = std::make_shared<CSetupManager>(this, &gameAttribute->GetSetupData());
-	script = new CInitScript(GetScriptManager(), this);  // partially registers CSetupManager
+	script = new CInitScript(GetScriptManager(), this);
+	script->RegisterCore();  // partially registers CSetupManager
 	std::vector<std::string> cfgParts;
 	CCircuitDef::SArmorInfo armor;
 	if (!script->InitConfig(profile, cfgParts, armor)) {

@@ -21,6 +21,7 @@ namespace springai {
 	class AIFloat3;
 }
 
+class asIScriptEngine;
 class asIScriptContext;
 class asIScriptFunction;
 class CScriptArray;
@@ -56,6 +57,7 @@ public:
 	bool InitConfig(const std::string& profile,
 			std::vector<std::string>& outCfgParts, CCircuitDef::SArmorInfo& outArmor);
 
+	void RegisterCore();
 	void RegisterMgr();
 	bool Init() override;
 	// script hooks
@@ -65,6 +67,15 @@ public:
 	void UnitDestroyed(CCircuitUnit* unit);
 
 private:
+	template <class T>
+	static void RegisterIUnitTask(asIScriptEngine* engine, const char* cls);
+	template <class T>
+	static void RegisterIBuilderTask(asIScriptEngine* engine, const char* cls);
+	template <class T>
+	static void RegisterIFighterTask(asIScriptEngine* engine, const char* cls);
+	static void RegisterCSuperTask(asIScriptEngine* engine);
+	static void RegisterUnitTasks(asIScriptEngine* engine);
+
 	CMaskHandler::TypeMask AddRole(const std::string& name, int actAsRole);
 
 	void Log(const std::string& msg) const;

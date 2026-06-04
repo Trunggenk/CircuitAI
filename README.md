@@ -1,6 +1,6 @@
-Circuit AI
+Circuit AI (requires info update)
 =========
-Framework for Spring RTS local native AIs.
+C++ Skirmish AI for Recoil RTS engine.
 
 ### Requirements
 * gcc 5.4+

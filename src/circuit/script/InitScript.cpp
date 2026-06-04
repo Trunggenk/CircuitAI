@@ -14,6 +14,7 @@
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "task/builder/BuilderTask.h"
+#include "task/static/SuperTask.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/GameAttribute.h"
@@ -34,6 +35,8 @@
 #include "Game.h"
 #include "Team.h"
 #include "Lua.h"
+
+#include <format>
 
 namespace circuit {
 
@@ -253,9 +256,131 @@ static CScriptArray* IUnitTask_GetUnits(IUnitTask* task)
 	return arr;
 }
 
+template<class From, class To>
+To* RefCast(From* src)
+{
+	// If the handle already is a null handle, then just return the null handle
+	if (!src) return nullptr;
+
+	// Now try to dynamically cast the pointer to the wanted type
+	To* dst = dynamic_cast<To*>(src);
+	if (dst != nullptr) {
+		// Since the cast was made, we need to increase the ref counter for the returned handle
+		dst->AddRef();
+	}
+	return dst;
+}
+
+template <class Base, class Derived>
+void RegisterCast(asIScriptEngine *engine, const char *base, const char* derived)
+{
+	int r;
+	r = engine->RegisterObjectMethod(base, std::format("{}@ opCast()", derived).c_str(), asFUNCTION((RefCast<Base, Derived>)), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod(derived, std::format("{}@ opImplCast()", base).c_str(), asFUNCTION((RefCast<Derived, Base>)), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod(base, std::format("const {}@ opCast() const", derived).c_str(), asFUNCTION((RefCast<Base, Derived>)), asCALL_CDECL_OBJLAST); ASSERT( r >= 0 );
+	r = engine->RegisterObjectMethod(derived, std::format("const {}@ opImplCast() const", base).c_str(), asFUNCTION((RefCast<Derived, Base>)), asCALL_CDECL_OBJLAST); ASSERT( r >= 0 );
+}
+
 CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 		: IScript(scr)
 		, circuit(ai)
+{
+}
+
+CInitScript::~CInitScript()
+{
+	for (auto& kv : takenContexts) {
+		if (kv.second) {
+			kv.second->Release();  // dictionary param
+		}
+		script->ReleaseContext(kv.first);
+	}
+}
+
+bool CInitScript::InitConfig(const std::string& profile,
+		std::vector<std::string>& outCfgParts, CCircuitDef::SArmorInfo& outArmor)
+{
+	asIScriptEngine* engine = script->GetEngine();
+	// FIXME: asASSERT( refCount == 0 ); at lib/angelscript/source/as_configgroup.cpp:157
+	//        on exit
+//	int r = engine->BeginConfigGroup(CScriptManager::initName.c_str()); ASSERT(r >= 0);
+	int r = engine->RegisterObjectType("SArmorInfo", sizeof(CCircuitDef::SArmorInfo), asOBJ_VALUE | asGetTypeTraits<CCircuitDef::SArmorInfo>()); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SArmorInfo", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructSArmorInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SArmorInfo", asBEHAVE_CONSTRUCT, "void f(const SArmorInfo& in)", asFUNCTION(ConstructCopySArmorInfo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SArmorInfo", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructSArmorInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("SArmorInfo", "SArmorInfo &opAssign(const SArmorInfo &in)", asFUNCTION(AssignSArmorInfoToSArmorInfo), asCALL_CDECL_OBJFIRST); assert( r >= 0 );
+	r = engine->RegisterObjectMethod("SArmorInfo", "void AddAir(int)", asFUNCTION(AddAirArmor), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("SArmorInfo", "void AddSurface(int)", asFUNCTION(AddSurfaceArmor), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("SArmorInfo", "void AddWater(int)", asFUNCTION(AddWaterArmor), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectType("SCategoryInfo", sizeof(SInitInfo::SCategoryInfo), asOBJ_VALUE | asGetTypeTraits<SInitInfo::SCategoryInfo>()); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SCategoryInfo", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructSCategoryInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SCategoryInfo", asBEHAVE_CONSTRUCT, "void f(const SCategoryInfo& in)", asFUNCTION(ConstructCopySCategoryInfo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SCategoryInfo", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructSCategoryInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("SCategoryInfo", "SCategoryInfo &opAssign(const SCategoryInfo &in)", asFUNCTION(AssignSCategoryInfoToSCategoryInfo), asCALL_CDECL_OBJFIRST); assert( r >= 0 );
+	r = engine->RegisterObjectProperty("SCategoryInfo", "string air", asOFFSET(SInitInfo::SCategoryInfo, air)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("SCategoryInfo", "string land", asOFFSET(SInitInfo::SCategoryInfo, land)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("SCategoryInfo", "string water", asOFFSET(SInitInfo::SCategoryInfo, water)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("SCategoryInfo", "string bad", asOFFSET(SInitInfo::SCategoryInfo, bad)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("SCategoryInfo", "string good", asOFFSET(SInitInfo::SCategoryInfo, good)); ASSERT(r >= 0);
+	r = engine->RegisterObjectType("SInitInfo", sizeof(SInitInfo), asOBJ_VALUE | asGetTypeTraits<SInitInfo>()); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SInitInfo", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructSInitInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SInitInfo", asBEHAVE_CONSTRUCT, "void f(const SInitInfo& in)", asFUNCTION(ConstructCopySInitInfo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour("SInitInfo", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructSInitInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("SInitInfo", "SArmorInfo armor", asOFFSET(SInitInfo, armor)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("SInitInfo", "SCategoryInfo category", asOFFSET(SInitInfo, category)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("SInitInfo", "array<string>@ profile", asOFFSET(SInitInfo, profile)); ASSERT(r >= 0);
+//	r = engine->EndConfigGroup(); ASSERT(r >= 0);
+
+	folderName = profile;
+	if (!script->Load(CScriptManager::initName.c_str(), folderName, CScriptManager::initName + ".as")) {
+		return false;
+	}
+	asIScriptModule* mod = script->GetEngine()->GetModule(CScriptManager::initName.c_str());
+	r = mod->SetDefaultNamespace("Init"); ASSERT(r >= 0);
+	asIScriptFunction* init = script->GetFunc(mod, "SInitInfo AiInit()");
+
+	if (init != nullptr) {
+		asIScriptContext* ctx = script->PrepareContext(init);
+		SInitInfo* result = script->Exec(ctx) ? (SInitInfo*)ctx->GetReturnObject() : nullptr;
+		if (result != nullptr) {
+			outArmor = result->armor;
+			if (outArmor.airTypes.empty()) {
+				outArmor.airTypes.push_back(0);  // default
+			}
+			if (outArmor.surfTypes.empty()) {
+				outArmor.surfTypes.push_back(0);  // default
+			}
+			if (outArmor.waterTypes.empty()) {
+				outArmor.waterTypes.push_back(0);  // default
+			}
+
+			Game* game = circuit->GetGame();
+			circuit->category.air = game->GetCategoriesFlag(result->category.air.c_str());
+			circuit->category.land = game->GetCategoriesFlag(result->category.land.c_str());
+			circuit->category.water = game->GetCategoriesFlag(result->category.water.c_str());
+			circuit->category.bad = game->GetCategoriesFlag(result->category.bad.c_str());
+			circuit->category.good = game->GetCategoriesFlag(result->category.good.c_str());
+
+			if (result->profile != nullptr) {
+				for (unsigned j = 0; j < result->profile->GetSize(); ++j) {
+					outCfgParts.push_back(*(std::string*)result->profile->At(j));
+				}
+			}
+		}
+		// NOTE: Init context shouldn't be used again, hence release;
+		//       assuming it contains references to unused types.
+		script->ReleaseContext(ctx);
+	}
+
+	mod->Discard();
+	// NOTE: destroys "array<T>". "main" should be registered and loaded first,
+	//       then "array<T>" will be in defaultGroup. But main-first is not a viable option.
+	//       And re-creating CScriptManager is not worth the effort.
+//	r = script->GetEngine()->RemoveConfigGroup(CScriptManager::initName.c_str()); ASSERT(r >= 0);
+	return true;
+}
+
+void CInitScript::RegisterCore()
 {
 	asIScriptEngine* engine = script->GetEngine();
 
@@ -467,19 +592,7 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 
 	r = engine->RegisterObjectType("CCircuitDef", 0, asOBJ_REF | asOBJ_NOCOUNT); ASSERT(r >= 0);
 	r = engine->RegisterObjectType("CCircuitUnit", 0, asOBJ_REF | asOBJ_NOCOUNT); ASSERT(r >= 0);
-	r = engine->RegisterObjectType("IUnitTask", 0, asOBJ_REF); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("IUnitTask", asBEHAVE_ADDREF, "void f()", asMETHODPR(IRefCounter, AddRef, (), int), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("IUnitTask", asBEHAVE_RELEASE, "void f()", asMETHODPR(IRefCounter, Release, (), int), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("IUnitTask", "int GetRefCount() const", asMETHODPR(IRefCounter, GetRefCount, () const, int), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("IUnitTask", "Type GetType() const", asMETHODPR(IUnitTask, GetType, () const, IUnitTask::Type), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("IUnitTask", "Type GetBuildType() const", asMETHODPR(IBuilderTask, GetBuildType, () const, IBuilderTask::BuildType), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("IUnitTask", "const AIFloat3& GetBuildPos() const", asMETHODPR(IBuilderTask, GetPosition, () const, const AIFloat3&), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("IUnitTask", "CCircuitDef@ const buildDef", asOFFSET(IBuilderTask, buildDef)); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("IUnitTask", "CCircuitUnit@ const target", asOFFSET(IBuilderTask, target)); ASSERT(r >= 0);
-	gUnitArrayType = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
-	r = engine->RegisterObjectMethod("IUnitTask", "array<CCircuitUnit@>@ GetUnits() const", asFUNCTION(IUnitTask_GetUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("IUnitTask", "void Abort()", asMETHOD(IUnitTask, Abort), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("IUnitTask", "void Done()", asMETHOD(IUnitTask, Done), asCALL_THISCALL); ASSERT(r >= 0);
+	RegisterUnitTasks(engine);
 
 	r = engine->RegisterObjectProperty("CCircuitAI", "const int frame", asOFFSET(CCircuitAI, lastFrame)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitAI", "const int skirmishAIId", asOFFSET(CCircuitAI, skirmishAIId)); ASSERT(r >= 0);
@@ -587,99 +700,6 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
 }
 
-CInitScript::~CInitScript()
-{
-	for (auto& kv : takenContexts) {
-		if (kv.second) {
-			kv.second->Release();  // dictionary param
-		}
-		script->ReleaseContext(kv.first);
-	}
-}
-
-bool CInitScript::InitConfig(const std::string& profile,
-		std::vector<std::string>& outCfgParts, CCircuitDef::SArmorInfo& outArmor)
-{
-	asIScriptEngine* engine = script->GetEngine();
-	// FIXME: asASSERT( refCount == 0 ); at lib/angelscript/source/as_configgroup.cpp:157
-	//        on exit
-//	int r = engine->BeginConfigGroup(CScriptManager::initName.c_str()); ASSERT(r >= 0);
-	int r = engine->RegisterObjectType("SArmorInfo", sizeof(CCircuitDef::SArmorInfo), asOBJ_VALUE | asGetTypeTraits<CCircuitDef::SArmorInfo>()); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SArmorInfo", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructSArmorInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SArmorInfo", asBEHAVE_CONSTRUCT, "void f(const SArmorInfo& in)", asFUNCTION(ConstructCopySArmorInfo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SArmorInfo", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructSArmorInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("SArmorInfo", "SArmorInfo &opAssign(const SArmorInfo &in)", asFUNCTION(AssignSArmorInfoToSArmorInfo), asCALL_CDECL_OBJFIRST); assert( r >= 0 );
-	r = engine->RegisterObjectMethod("SArmorInfo", "void AddAir(int)", asFUNCTION(AddAirArmor), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("SArmorInfo", "void AddSurface(int)", asFUNCTION(AddSurfaceArmor), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("SArmorInfo", "void AddWater(int)", asFUNCTION(AddWaterArmor), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-	r = engine->RegisterObjectType("SCategoryInfo", sizeof(SInitInfo::SCategoryInfo), asOBJ_VALUE | asGetTypeTraits<SInitInfo::SCategoryInfo>()); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SCategoryInfo", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructSCategoryInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SCategoryInfo", asBEHAVE_CONSTRUCT, "void f(const SCategoryInfo& in)", asFUNCTION(ConstructCopySCategoryInfo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SCategoryInfo", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructSCategoryInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("SCategoryInfo", "SCategoryInfo &opAssign(const SCategoryInfo &in)", asFUNCTION(AssignSCategoryInfoToSCategoryInfo), asCALL_CDECL_OBJFIRST); assert( r >= 0 );
-	r = engine->RegisterObjectProperty("SCategoryInfo", "string air", asOFFSET(SInitInfo::SCategoryInfo, air)); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("SCategoryInfo", "string land", asOFFSET(SInitInfo::SCategoryInfo, land)); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("SCategoryInfo", "string water", asOFFSET(SInitInfo::SCategoryInfo, water)); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("SCategoryInfo", "string bad", asOFFSET(SInitInfo::SCategoryInfo, bad)); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("SCategoryInfo", "string good", asOFFSET(SInitInfo::SCategoryInfo, good)); ASSERT(r >= 0);
-	r = engine->RegisterObjectType("SInitInfo", sizeof(SInitInfo), asOBJ_VALUE | asGetTypeTraits<SInitInfo>()); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SInitInfo", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructSInitInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SInitInfo", asBEHAVE_CONSTRUCT, "void f(const SInitInfo& in)", asFUNCTION(ConstructCopySInitInfo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour("SInitInfo", asBEHAVE_DESTRUCT, "void f()", asFUNCTION(DestructSInitInfo), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("SInitInfo", "SArmorInfo armor", asOFFSET(SInitInfo, armor)); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("SInitInfo", "SCategoryInfo category", asOFFSET(SInitInfo, category)); ASSERT(r >= 0);
-	r = engine->RegisterObjectProperty("SInitInfo", "array<string>@ profile", asOFFSET(SInitInfo, profile)); ASSERT(r >= 0);
-//	r = engine->EndConfigGroup(); ASSERT(r >= 0);
-
-	folderName = profile;
-	if (!script->Load(CScriptManager::initName.c_str(), folderName, CScriptManager::initName + ".as")) {
-		return false;
-	}
-	asIScriptModule* mod = script->GetEngine()->GetModule(CScriptManager::initName.c_str());
-	r = mod->SetDefaultNamespace("Init"); ASSERT(r >= 0);
-	asIScriptFunction* init = script->GetFunc(mod, "SInitInfo AiInit()");
-
-	if (init != nullptr) {
-		asIScriptContext* ctx = script->PrepareContext(init);
-		SInitInfo* result = script->Exec(ctx) ? (SInitInfo*)ctx->GetReturnObject() : nullptr;
-		if (result != nullptr) {
-			outArmor = result->armor;
-			if (outArmor.airTypes.empty()) {
-				outArmor.airTypes.push_back(0);  // default
-			}
-			if (outArmor.surfTypes.empty()) {
-				outArmor.surfTypes.push_back(0);  // default
-			}
-			if (outArmor.waterTypes.empty()) {
-				outArmor.waterTypes.push_back(0);  // default
-			}
-
-			Game* game = circuit->GetGame();
-			circuit->category.air = game->GetCategoriesFlag(result->category.air.c_str());
-			circuit->category.land = game->GetCategoriesFlag(result->category.land.c_str());
-			circuit->category.water = game->GetCategoriesFlag(result->category.water.c_str());
-			circuit->category.bad = game->GetCategoriesFlag(result->category.bad.c_str());
-			circuit->category.good = game->GetCategoriesFlag(result->category.good.c_str());
-
-			if (result->profile != nullptr) {
-				for (unsigned j = 0; j < result->profile->GetSize(); ++j) {
-					outCfgParts.push_back(*(std::string*)result->profile->At(j));
-				}
-			}
-		}
-		// NOTE: Init context shouldn't be used again, hence release;
-		//       assuming it contains references to unused types.
-		script->ReleaseContext(ctx);
-	}
-
-	mod->Discard();
-	// NOTE: destroys "array<T>". "main" should be registered and loaded first,
-	//       then "array<T>" will be in defaultGroup. But main-first is not a viable option.
-	//       And re-creating CScriptManager is not worth the effort.
-//	r = script->GetEngine()->RemoveConfigGroup(CScriptManager::initName.c_str()); ASSERT(r >= 0);
-	return true;
-}
-
 void CInitScript::RegisterMgr()
 {
 	asIScriptEngine* engine = script->GetEngine();
@@ -777,6 +797,57 @@ void CInitScript::UnitDestroyed(CCircuitUnit* unit)
 	ctx->SetArgObject(0, unit);
 	script->Exec(ctx);
 	script->ReturnContext(ctx);
+}
+
+template <class T>
+void CInitScript::RegisterIUnitTask(asIScriptEngine* engine, const char* cls)
+{
+	int r;
+	r = engine->RegisterObjectType(cls, 0, asOBJ_REF); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour(cls, asBEHAVE_ADDREF, "void f()", asMETHODPR(IRefCounter, AddRef, (), int), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectBehaviour(cls, asBEHAVE_RELEASE, "void f()", asMETHODPR(IRefCounter, Release, (), int), asCALL_THISCALL); ASSERT(r >= 0);
+//	r = engine->RegisterObjectMethod(cls, "int GetRefCount() const", asMETHODPR(IRefCounter, GetRefCount, () const, int), asCALL_THISCALL); ASSERT(r >= 0);
+
+	r = engine->RegisterObjectMethod(cls, "Type GetType() const", asMETHODPR(T, GetType, () const, IUnitTask::Type), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod(cls, "array<CCircuitUnit@>@ GetUnits() const", asFUNCTION(IUnitTask_GetUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod(cls, "void Abort()", asMETHOD(T, Abort), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod(cls, "void Done()", asMETHOD(T, Done), asCALL_THISCALL); ASSERT(r >= 0);
+}
+
+template <class T>
+void CInitScript::RegisterIBuilderTask(asIScriptEngine* engine, const char* cls)
+{
+	RegisterIUnitTask<T>(engine, cls);
+	RegisterCast<IUnitTask, T>(engine, "IUnitTask", cls);
+	int r;
+	r = engine->RegisterObjectMethod(cls, "Type GetBuildType() const", asMETHODPR(T, GetBuildType, () const, IBuilderTask::BuildType), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod(cls, "const AIFloat3& GetBuildPos() const", asMETHODPR(T, GetPosition, () const, const AIFloat3&), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty(cls, "CCircuitDef@ const buildDef", asOFFSET(T, buildDef)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty(cls, "CCircuitUnit@ const target", asOFFSET(T, target)); ASSERT(r >= 0);
+}
+
+template <class T>
+void CInitScript::RegisterIFighterTask(asIScriptEngine* engine, const char* cls)
+{
+	RegisterIUnitTask<T>(engine, cls);
+	RegisterCast<IUnitTask, T>(engine, "IUnitTask", cls);
+	int r = engine->RegisterObjectMethod(cls, "Type GetFightType() const", asMETHODPR(T, GetFightType, () const, IFighterTask::FightType), asCALL_THISCALL); ASSERT(r >= 0);
+}
+
+void CInitScript::RegisterCSuperTask(asIScriptEngine* engine)
+{
+	RegisterIFighterTask<CSuperTask>(engine, "CSuperTask");
+	RegisterCast<IFighterTask, CSuperTask>(engine, "IFighterTask", "CSuperTask");
+	int r = engine->RegisterObjectMethod("CSuperTask", "void SetTargetPos(const AIFloat3& in)", asMETHOD(CSuperTask, SetTargetPos), asCALL_THISCALL); ASSERT(r >= 0);
+}
+
+void CInitScript::RegisterUnitTasks(asIScriptEngine* engine)
+{
+	gUnitArrayType = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
+	RegisterIUnitTask<IUnitTask>(engine, "IUnitTask");
+	RegisterIBuilderTask<IBuilderTask>(engine, "IBuilderTask");
+	RegisterIFighterTask<IFighterTask>(engine, "IFighterTask");
+	RegisterCSuperTask(engine);
 }
 
 CMaskHandler::TypeMask CInitScript::AddRole(const std::string& name, int actAsRole)

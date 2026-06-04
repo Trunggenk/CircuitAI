@@ -11,9 +11,10 @@ CCircuitUnit@ energizer2 = null;
 
 void AiTaskAssigned(CCircuitUnit@ unit)
 {
-// 	if (unit.task.GetType() == Task::Type::BUILDER)
-// 		AiLog("build-task for "unit.circuitDef.GetName() + ", buildType=" + unit.task.GetBuildType());
-// 	else
+// 	if (unit.task.GetType() == Task::Type::BUILDER) {
+// 		IBuilderTask@ taskB = cast<IBuilderTask>(unit.task);  // omit "!is null" check because of GetType() check
+// 		AiLog("build-task for " + unit.circuitDef.GetName() + ", buildType=" + taskB.GetBuildType());
+// 	} else
 // 		AiLog("Not a build-task for " + unit.circuitDef.GetName() + ", type=" + unit.task.GetType());
 }
 
@@ -25,12 +26,13 @@ IUnitTask@ AiMakeTask(CCircuitUnit@ unit)
 
 // 	IUnitTask@ task = aiBuilderMgr.DefaultMakeTask(unit);
 // 	if ((task !is null) && (task.GetType() == Task::Type::BUILDER)) {
-// 		switch (task.GetBuildType()) {
+// 		IBuilderTask@ taskB = cast<IBuilderTask>(task);
+// 		switch (taskB.GetBuildType()) {
 // 		case Task::BuildType::MEX:
-// 			AiAddPoint(task.GetBuildPos(), task.GetBuildDef().GetName());
+// 			AiAddPoint(taskB.GetBuildPos(), taskB.buildDef.GetName());
 // 			break;
 // 		case Task::BuildType::DEFENCE:
-// 			AiAddPoint(task.GetBuildPos(), task.GetBuildDef().GetName());
+// 			AiAddPoint(taskB.GetBuildPos(), taskB.buildDef.GetName());
 // 			break;
 // 		default:
 // 			break;
@@ -44,15 +46,16 @@ void AiTaskAdded(IUnitTask@ task)
 {
 // 	if (task.GetType() != Task::Type::BUILDER)
 // 		return;
-// 	switch (task.GetBuildType()) {
+// 	IBuilderTask@ taskB = cast<IBuilderTask>(task);
+// 	switch (taskB.GetBuildType()) {
 // 	case Task::BuildType::ENERGY: {
 // 		if (gPauseCnt == 0) {
-// 			string name = task.GetBuildDef().GetName();
+// 			string name = taskB.buildDef.GetName();
 // 			if ((name == "armfus") || (name == "armafus") || (name == "corfus") || (name == "corafus")) {
 // 				AiPause(true, "energy");
 // 				++gPauseCnt;
 // 			}
-// 			AiAddPoint(task.GetBuildPos(), name);
+// 			AiAddPoint(taskB.GetBuildPos(), name);
 // 		}
 // 	} break;
 // 	case Task::BuildType::FACTORY:
@@ -69,19 +72,19 @@ void AiTaskAdded(IUnitTask@ task)
 // 	case Task::BuildType::CONVERT:
 // 	case Task::BuildType::MEX:
 // 	case Task::BuildType::MEXUP:
-// 		AiAddPoint(task.GetBuildPos(), task.GetBuildDef().GetName());
+// 		AiAddPoint(taskB.GetBuildPos(), taskB.buildDef.GetName());
 // 		break;
 // 	case Task::BuildType::REPAIR:
-// 		AiAddPoint(task.GetBuildPos(), "rep");
+// 		AiAddPoint(taskB.GetBuildPos(), "rep");
 // 		break;
 // 	case Task::BuildType::RECLAIM:
-// 		AiAddPoint(task.GetBuildPos(), "rec");
+// 		AiAddPoint(taskB.GetBuildPos(), "rec");
 // 		break;
 // 	case Task::BuildType::RESURRECT:
-// 		AiAddPoint(task.GetBuildPos(), "res");
+// 		AiAddPoint(taskB.GetBuildPos(), "res");
 // 		break;
 // 	case Task::BuildType::TERRAFORM:
-// 		AiAddPoint(task.GetBuildPos(), "ter");
+// 		AiAddPoint(taskB.GetBuildPos(), "ter");
 // 		break;
 // 	default:
 // 		break;
@@ -92,7 +95,8 @@ void AiTaskRemoved(IUnitTask@ task, bool done)
 {
 // 	if (task.GetType() != Task::Type::BUILDER)
 // 		return;
-// 	switch (task.GetBuildType()) {
+// 	IBuilderTask@ taskB = cast<IBuilderTask>(task);
+// 	switch (taskB.GetBuildType()) {
 // 	case Task::BuildType::FACTORY:
 // 	case Task::BuildType::NANO:
 // 	case Task::BuildType::STORE:
@@ -112,7 +116,7 @@ void AiTaskRemoved(IUnitTask@ task, bool done)
 // 	case Task::BuildType::RECLAIM:
 // 	case Task::BuildType::RESURRECT:
 // 	case Task::BuildType::TERRAFORM:
-// 		AiDelPoint(task.GetBuildPos());
+// 		AiDelPoint(taskB.GetBuildPos());
 // 		break;
 // 	default:
 // 		break;

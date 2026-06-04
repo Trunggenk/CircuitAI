@@ -23,9 +23,14 @@ public:
 	virtual void Start(CCircuitUnit* unit) override;
 	virtual void Update() override;
 
+	void SetTargetPos(const springai::AIFloat3& pos);
+
 private:
+	void ExecuteAttack(CCircuitUnit* unit);
+
 	int targetFrame;
 	springai::AIFloat3 targetPos;
+	bool isTargetOverride;
 };
 
 } // namespace circuit

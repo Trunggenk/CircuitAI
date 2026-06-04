@@ -19,6 +19,8 @@
 #include "AISCommands.h"
 #include "Lua.h"
 
+#include <format>
+
 namespace circuit {
 
 using namespace springai;
@@ -29,6 +31,7 @@ CSuperTask::CSuperTask(ITaskModule* mgr)
 		: IFighterTask(mgr, IFighterTask::FightType::SUPER, 1.f)
 		, targetFrame(0)
 		, targetPos(-RgtVector)
+		, isTargetOverride(false)
 {
 }
 
@@ -78,6 +81,11 @@ void CSuperTask::Update()
 			return;
 		}
 	} else if (targetFrame + TARGET_DELAY > frame) {
+		return;
+	}
+
+	if (isTargetOverride) {
+		ExecuteAttack(unit);
 		return;
 	}
 
@@ -204,20 +212,40 @@ void CSuperTask::Update()
 		targetPos = GetTarget()->GetPos();
 		targetPos.y = circuit->GetMap()->GetElevationAt(targetPos.x, targetPos.z);
 
-		std::string cmd = (!cdef->IsAttrStock() || (unit->GetUnit()->GetStockpile() > 0)) ? "ai_super_fire:" : "ai_super_intention:";
-		cmd += utils::int_to_string(unit->GetId()) + "/" + utils::int_to_string(targetPos.x) + "/" + utils::int_to_string(targetPos.z);
-		circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
-
-		TRY_UNIT(circuit, unit,
-			if (GetTarget()->IsInRadarOrLOS() && !circuit->IsCheating()) {
-				unit->GetUnit()->Attack(GetTarget()->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-			} else {
-				unit->CmdAttackGround(targetPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-			}
-		)
-		targetFrame = frame;
-		state = State::ENGAGE;
+		ExecuteAttack(unit);
 	}
+}
+
+void CSuperTask::SetTargetPos(const AIFloat3& pos)
+{
+	SetTarget(nullptr);
+	targetFrame = 0;
+	isTargetOverride = utils::is_valid(pos);
+	if (isTargetOverride) {
+		targetPos = pos;
+		targetPos.y = manager->GetCircuit()->GetMap()->GetElevationAt(pos.x, pos.z);
+	}
+}
+
+void CSuperTask::ExecuteAttack(CCircuitUnit* unit)
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	const int frame = circuit->GetLastFrame();
+
+	bool isFiring = !unit->GetCircuitDef()->IsAttrStock() || (unit->GetUnit()->GetStockpile() > 0);
+	std::string cmd = isFiring ? "ai_super_fire:" : "ai_super_intention:";
+	cmd += std::format("{}/{}/{}", unit->GetId(), int(targetPos.x), int(targetPos.z));
+	circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
+
+	TRY_UNIT(circuit, unit,
+		if (!isTargetOverride && GetTarget()->IsInRadarOrLOS() && !circuit->IsCheating()) {
+			unit->GetUnit()->Attack(GetTarget()->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		} else {
+			unit->CmdAttackGround(targetPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+		}
+	)
+	targetFrame = frame;
+	state = State::ENGAGE;
 }
 
 } // namespace circuit
