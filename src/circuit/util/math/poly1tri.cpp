@@ -104,7 +104,7 @@ bool Triangulate::Process(const F3Vec &contour,IndexVec &result)
   /*  remove nv-2 Vertices, creating 1 triangle every time */
   int count = 2*nv;   /* error detection */
 
-  for(int m=0, v=nv-1; nv>2; )
+  for(int /*m=0, */v=nv-1; nv>2; )
   {
     /* if we loop, it is probably a non-simple polygon */
     if (0 >= (count--))
@@ -130,7 +130,7 @@ bool Triangulate::Process(const F3Vec &contour,IndexVec &result)
       result.push_back( /*contour[b]*/b );
       result.push_back( /*contour[c]*/c );
 
-      m++;
+      // m++;
 
       /* remove v from remaining polygon */
       for(s=v,t=v+1;t<nv;s++,t++) V[s] = V[t];

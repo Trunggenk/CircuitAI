@@ -345,7 +345,7 @@ void CSetupManager::ReadConfig()
 	commSuffix = comm["suffix"].asString();
 //	std::vector<CCircuitDef*> commChoices;
 //	commChoices.reserve(items.size());
-	float magnitude = 0.f;
+//	float magnitude = 0.f;
 	std::vector<float> weight;
 	weight.reserve(items.size());
 
@@ -360,7 +360,7 @@ void CSetupManager::ReadConfig()
 
 		const Json::Value& comm = items[commName];
 		const float imp = comm.get("importance", 0.f).asFloat();
-		magnitude += imp;
+//		magnitude += imp;
 		weight.push_back(imp);
 
 		const Json::Value& mrph = comm["upgrade"];

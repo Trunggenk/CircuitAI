@@ -62,6 +62,7 @@ void CScriptManager::Init()
 	r = engine->SetEngineProperty(asEP_USE_CHARACTER_LITERALS,             false); ASSERT(r >= 0);  // Default: false
 	r = engine->SetEngineProperty(asEP_ALLOW_MULTILINE_STRINGS,             true); ASSERT(r >= 0);  //** Default: false
 	r = engine->SetEngineProperty(asEP_ALLOW_IMPLICIT_HANDLE_TYPES,        false); ASSERT(r >= 0);  // Default: false
+	// Fine tuning
 	r = engine->SetEngineProperty(asEP_BUILD_WITHOUT_LINE_CUES,            false); ASSERT(r >= 0);  // Default: false
 	r = engine->SetEngineProperty(asEP_INIT_GLOBAL_VARS_AFTER_BUILD,        true); ASSERT(r >= 0);  // Default: true
 	r = engine->SetEngineProperty(asEP_REQUIRE_ENUM_SCOPE,                 false); ASSERT(r >= 0);  // Default: false
@@ -72,6 +73,7 @@ void CScriptManager::Init()
 	r = engine->SetEngineProperty(asEP_EXPAND_DEF_ARRAY_TO_TMPL,           false); ASSERT(r >= 0);  // Default: false
 	r = engine->SetEngineProperty(asEP_AUTO_GARBAGE_COLLECT,                true); ASSERT(r >= 0);  // Default: true
 	r = engine->SetEngineProperty(asEP_DISALLOW_GLOBAL_VARS,               false); ASSERT(r >= 0);  // Default: false
+	// Fine tuning
 	r = engine->SetEngineProperty(asEP_ALWAYS_IMPL_DEFAULT_CONSTRUCT,      false); ASSERT(r >= 0);  // Default: false
 	r = engine->SetEngineProperty(asEP_COMPILER_WARNINGS,                      2); ASSERT(r >= 0);  //** 0 - dismiss, 1 - emit, 2 - treat as error
 	r = engine->SetEngineProperty(asEP_DISALLOW_VALUE_ASSIGN_FOR_REF_TYPE, false); ASSERT(r >= 0);  // Default: false
@@ -96,6 +98,7 @@ void CScriptManager::Init()
 	// Enable JIT helper instructions; without these,
 	// the JIT will not be invoked
 	r = engine->SetEngineProperty(asEP_INCLUDE_JIT_INSTRUCTIONS, true); ASSERT(r >= 0);
+	r = engine->SetEngineProperty(asEP_JIT_INTERFACE_VERSION,       1); ASSERT(r >= 0);  // Default: 1
 	// Bind the JIT compiler to the engine
 	r = engine->SetJITCompiler(jit); ASSERT(r >= 0);
 #endif

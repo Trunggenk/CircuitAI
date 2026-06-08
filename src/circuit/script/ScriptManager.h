@@ -18,7 +18,7 @@ class asIScriptModule;
 class asIScriptFunction;
 class asIScriptContext;
 class asSMessageInfo;
-class asCJITCompiler;
+class asIJITCompiler;
 
 namespace circuit {
 
@@ -55,7 +55,7 @@ private:
 	// the context objects all the time. The context objects are quite
 	// heavy weight and should be shared between function calls.
 	std::vector<asIScriptContext*> contexts;
-	asCJITCompiler* jit;
+	asIJITCompiler* jit;
 	spring::mutex mtx;
 
 	static asIScriptContext* ProvideContext(asIScriptEngine*, void*);
