@@ -104,7 +104,7 @@ void CTerrainData::Init(CCircuitAI* circuit)
 	float waterDamage = map->GetWaterDamage();  // scaled by (UNIT_SLOWUPDATE_RATE / GAME_SPEED)
 	std::string waterText = "  Water Damage: " + utils::float_to_string(waterDamage/*, "%-.*G"*/);
 	// @see rts/Sim/MoveTypes/MoveDefHandler.cpp
-	if (waterDamage > 0) {  // >= MAX_ALLOWED_WATER_DAMAGE_GMM
+	if ((waterDamage > 0) || circuit->GetSetupManager()->IsWaterHarmful()) {  // >= MAX_ALLOWED_WATER_DAMAGE_GMM
 		waterIsHarmful = true;
 		waterText += " (This map's water is harmful to land units";
 //		if (waterDamage >= MAX_ALLOWED_WATER_DAMAGE_HMM) {  // TODO: Mark water blocks as threat?

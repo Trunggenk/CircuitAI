@@ -227,10 +227,7 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 	const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
 	if (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist)) {
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		float x = rand() % terrainMgr->GetTerrainWidth();
-		float z = rand() % terrainMgr->GetTerrainHeight();
-		position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
-		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
+		position = terrainMgr->GetRandomMovePosition(leader);
 	}
 
 	if (units.find(unit) != units.end()) {
@@ -419,12 +416,13 @@ void CAttackTask::Fallback()
 {
 	// should never happen
 	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
+		if (unit->GetTravelAct()->GetState() == IAction::State::WAIT) {
+			continue;
+		}
 		unit->GetTravelAct()->StateWait();
 		TRY_UNIT(circuit, unit,
-			unit->CmdFightTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-			unit->CmdWantedSpeed(lowestSpeed);
+			unit->CmdStop();
 		)
 	}
 }

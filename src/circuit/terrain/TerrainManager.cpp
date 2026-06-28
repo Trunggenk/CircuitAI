@@ -767,6 +767,14 @@ void CTerrainManager::DoLineOfDef(const AIFloat3& start, const AIFloat3& end, CC
 	}
 }
 
+AIFloat3 CTerrainManager::GetRandomMovePosition(CCircuitUnit* unit)
+{
+	float x = rand() % GetTerrainWidth();
+	float z = rand() % GetTerrainHeight();
+	AIFloat3 pos(x, circuit->GetMap()->GetElevationAt(x, z), z);
+	return GetMovePosition(unit->GetArea(), pos);
+}
+
 const SBlockingMap& CTerrainManager::GetBlockingMap()
 {
 	if (circuit->IsAllyAware()) {

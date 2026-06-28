@@ -329,17 +329,12 @@ void CArtilleryTask::Fallback(CCircuitUnit* unit, bool proceed)
 		return;
 	}
 
-	CCircuitAI* circuit = manager->GetCircuit();
-	const int frame = circuit->GetLastFrame();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-
-	float x = rand() % terrainMgr->GetTerrainWidth();
-	float z = rand() % terrainMgr->GetTerrainHeight();
-	position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
-	position = terrainMgr->GetMovePosition(unit->GetArea(), position);
+	if (unit->GetTravelAct()->GetState() == IAction::State::WAIT) {
+		return;
+	}
 	unit->GetTravelAct()->StateWait();
-	TRY_UNIT(circuit, unit,
-		unit->CmdFightTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+	TRY_UNIT(manager->GetCircuit(), unit,
+		unit->CmdStop();
 	)
 }
 

@@ -696,6 +696,7 @@ void CInitScript::RegisterCore()
 	CSetupManager* setupMgr = circuit->GetSetupManager();
 	r = engine->RegisterObjectType("CSetupManager", 0, asOBJ_REF | asOBJ_NOHANDLE); ASSERT(r >= 0);
 	r = engine->RegisterGlobalProperty("CSetupManager aiSetupMgr", setupMgr); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CSetupManager", "void SetWaterHarmful(bool)", asMETHOD(CSetupManager, SetWaterHarmful), asCALL_THISCALL); ASSERT(r >= 0);
 	// AS docs / "Registering object methods" / "Composite members"
 	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
 }

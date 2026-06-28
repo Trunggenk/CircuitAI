@@ -23,6 +23,7 @@ public:
 	virtual void Start(CCircuitUnit* unit) override;
 	virtual void Update() override;
 
+	// Script hooks
 	void SetTargetPos(const springai::AIFloat3& pos);
 
 private:

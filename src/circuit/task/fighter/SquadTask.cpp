@@ -477,7 +477,7 @@ void ISquadTask::Log()
 	IFighterTask::Log();
 
 	CCircuitAI* circuit = manager->GetCircuit();
-	circuit->LOG("pPath: %i | size: %i | TravelAct: %i", pPath.get(), pPath ? pPath->posPath.size() : 0,
+	circuit->LOG("pPath: %p | size: %i | TravelAct: %i", pPath.get(), pPath ? pPath->posPath.size() : 0,
 			leader->GetTravelAct()->GetState());
 	if (leader != nullptr) {
 		circuit->GetDrawer()->AddPoint(leader->GetPos(circuit->GetLastFrame()), leader->GetCircuitDef()->GetDef()->GetName());

@@ -85,6 +85,7 @@ public:
 //	springai::AIFloat3 FindSpringBuildSite(CCircuitDef* cdef, const springai::AIFloat3& pos, float searchRadius, int facing);
 	void DoLineOfDef(const springai::AIFloat3& start, const springai::AIFloat3& end, CCircuitDef* buildDef,
 			std::function<void (const springai::AIFloat3& pos, CCircuitDef* buildDef)> exec) const;  // FillRowOfBuildPos
+	springai::AIFloat3 GetRandomMovePosition(CCircuitUnit* unit);
 
 	const SBlockingMap& GetBlockingMap();
 	bool IsZoneAlly(const springai::AIFloat3& pos) const;

@@ -57,6 +57,7 @@ CSetupManager::CSetupManager(CCircuitAI* circuit, CSetupData* setupData)
 		, assistFac(0)
 		, commChoice(nullptr)
 		, isSideSelected(false)
+		, isWaterHarmful(false)
 {
 	if (!setupData->IsInitialized()) {
 		setupData->ParseSetupScript(circuit, circuit->GetGame()->GetSetupScript());

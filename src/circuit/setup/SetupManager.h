@@ -92,6 +92,13 @@ public:
 
 	void Welcome() const;
 
+	// Script hooks
+	// TODO: Replace injected variables by
+	//       separate struct containing setup-related
+	//       script-defined states and values
+	void SetWaterHarmful(bool value) { isWaterHarmful = value; }
+	bool IsWaterHarmful() const { return isWaterHarmful; }
+
 private:
 	void FindStart();
 	void CalcStartPos();
@@ -133,6 +140,8 @@ private:
 	bool isSideSelected;  // FIXME: Random-Side workaround
 
 	std::map<CCircuitDef::Id, std::string> sides;  // comm: side
+
+	bool isWaterHarmful;
 };
 
 } // namespace circuit

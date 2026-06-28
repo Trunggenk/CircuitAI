@@ -303,10 +303,7 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 	}
 
 	if (!utils::is_valid(position)) {
-		float x = rand() % terrainMgr->GetTerrainWidth();
-		float z = rand() % terrainMgr->GetTerrainHeight();
-		position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
-		position = terrainMgr->GetMovePosition(unit->GetArea(), position);
+		position = terrainMgr->GetRandomMovePosition(unit);
 	}
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
