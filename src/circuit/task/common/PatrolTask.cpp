@@ -37,7 +37,7 @@ void IPatrolTask::AssignTo(CCircuitUnit* unit)
 	ShowAssignee(unit);
 	const float size = SQUARE_SIZE * 100;
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	if (!utils::is_valid(position)) {
+	if (!geom::is_valid(position)) {
 		AIFloat3 pos = unit->GetPos(circuit->GetLastFrame());
 		pos.x += (pos.x > terrainMgr->GetTerrainWidth() / 2) ? -size : size;
 		pos.z += (pos.z > terrainMgr->GetTerrainHeight() / 2) ? -size : size;

@@ -24,7 +24,7 @@ CRallyTask::CRallyTask(ITaskModule* mgr, float maxPower)
 		, maxPower(maxPower)
 {
 	const AIFloat3& pos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
-	position = utils::get_radial_pos(pos, SQUARE_SIZE * 32);
+	position = geom::get_radial_pos(pos, SQUARE_SIZE * 32);
 }
 
 CRallyTask::~CRallyTask()
@@ -59,7 +59,7 @@ void CRallyTask::Start(CCircuitUnit* unit)
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 		AIFloat3 freePos = terrainMgr->FindBuildSite(unit->GetCircuitDef(), position, 300.0f, UNIT_NO_FACING, true);
 //		AIFloat3 freePos = terrainMgr->FindSpringBuildSite(unit->GetCircuitDef(), position, 300.0f, UNIT_NO_FACING);
-		AIFloat3 pos = utils::is_valid(freePos) ? freePos : position;
+		AIFloat3 pos = geom::is_valid(freePos) ? freePos : position;
 
 		TRY_UNIT(circuit, unit,
 			unit->CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);

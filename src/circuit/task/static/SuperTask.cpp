@@ -220,7 +220,7 @@ void CSuperTask::SetTargetPos(const AIFloat3& pos)
 {
 	SetTarget(nullptr);
 	targetFrame = 0;
-	isTargetOverride = utils::is_valid(pos);
+	isTargetOverride = geom::is_valid(pos);
 	if (isTargetOverride) {
 		targetPos = pos;
 		targetPos.y = manager->GetCircuit()->GetMap()->GetElevationAt(pos.x, pos.z);

@@ -8,10 +8,9 @@
 #ifndef SRC_CIRCUIT_UTIL_MATH_GEOMETRY_H_
 #define SRC_CIRCUIT_UTIL_MATH_GEOMETRY_H_
 
-#include "Sim/Misc/GlobalConstants.h"
-#include "AIFloat3.h"
+#include "../Defines.h"
 
-namespace utils {
+namespace geom {
 
 static inline bool is_equal_pos(const springai::AIFloat3& posA, const springai::AIFloat3& posB, const float slack = SQUARE_SIZE * 2)
 {
@@ -38,6 +37,10 @@ static inline bool is_valid(const springai::AIFloat3& pos)
 
 static inline bool is_in_map(const springai::AIFloat3& pos) {  // for assert
 	return (pos.x >= 0) && (pos.z >= 0) && (pos.x <= springai::AIFloat3::maxxpos) && (pos.z <= springai::AIFloat3::maxzpos);
+}
+
+static inline bool is_in_range(const springai::AIFloat3& posA, const springai::AIFloat3& posB, float range) {
+	return posA.SqDistance2D(posB) <= SQUARE(range);
 }
 
 /*

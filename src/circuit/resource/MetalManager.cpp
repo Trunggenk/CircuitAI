@@ -392,7 +392,7 @@ bool CMetalManager::IsSpotValid(int index, const AIFloat3& pos) const
 	if ((index < 0) || ((size_t)index >= GetSpots().size())) {
 		return false;
 	}
-	return utils::is_equal_pos(GetSpots()[index].position, pos);
+	return geom::is_equal_pos(GetSpots()[index].position, pos);
 }
 
 int CMetalManager::GetSpotToDo(const AIFloat3& pos, CMetalData::PointPredicate& predicate,

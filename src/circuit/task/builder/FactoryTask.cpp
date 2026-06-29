@@ -107,7 +107,7 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 	const float testSize = std::max(buildDef->GetDef()->GetXSize(), buildDef->GetDef()->GetZSize()) * SQUARE_SIZE;
 	auto checkFacing = [this, map, terrainMgr, testSize, &predicate, &pos, searchRadius]() {
 		AIFloat3 bp = terrainMgr->FindBuildSite(buildDef, pos, searchRadius, facing, predicate);
-		if (!utils::is_valid(bp)) {
+		if (!geom::is_valid(bp)) {
 			return false;
 		}
 

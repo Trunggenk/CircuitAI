@@ -1179,7 +1179,7 @@ CCircuitDef* CFactoryManager::GetLargestDef(const CCircuitDef* facDef) const
 CCircuitDef* CFactoryManager::DefaultGetFactoryToBuild(const AIFloat3& position, bool isStart, bool isReset)
 {
 	CCircuitDef* facDef = factoryData->GetFactoryToBuild(circuit, position, isStart, isReset);
-	if ((facDef == nullptr) && utils::is_valid(position)) {
+	if ((facDef == nullptr) && geom::is_valid(position)) {
 		facDef = factoryData->GetFactoryToBuild(circuit, -RgtVector, isStart, isReset);
 	}
 	return facDef;

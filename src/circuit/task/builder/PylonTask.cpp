@@ -78,7 +78,7 @@ bool CBPylonTask::Execute(CCircuitUnit* unit)
 		)
 		return true;
 	}
-	if (utils::is_valid(buildPos)
+	if (geom::is_valid(buildPos)
 		&& circuit->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing))
 	{
 		TRY_UNIT(circuit, unit,
@@ -91,7 +91,7 @@ bool CBPylonTask::Execute(CCircuitUnit* unit)
 	const float searchRadius = circuit->GetEconomyManager()->GetPylonRange() * 0.5f;
 	FindBuildSite(unit, position, searchRadius);
 
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		TRY_UNIT(circuit, unit,
 			unit->CmdBuild(buildDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)

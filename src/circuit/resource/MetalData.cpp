@@ -273,7 +273,7 @@ void CMetalData::MakeResourcePoints(CMap* map, Resource* res, F3Vec& vectoredSpo
 
 	// do the average
 //	float averageIncome = totalResourcesDouble / totalCells;
-	int numSpotsFound = 0;
+//	int numSpotsFound = 0;
 
 	// if the map does not have any resource (quick test), just stop
 	if (totalResourcesDouble < 0.9)
@@ -496,7 +496,7 @@ void CMetalData::MakeResourcePoints(CMap* map, Resource* res, F3Vec& vectoredSpo
 		bufferSpot.y = tempResources * maxWorth * maxResource / 255;
 		vectoredSpots.push_back(bufferSpot);
 
-		numSpotsFound += 1;
+//		numSpotsFound += 1;
 
 		// small speedup of "wipes the resources around the spot so it is not counted twice"
 		for (int sy = coordZ - xtractorRadius, a = 0;  sy <= coordZ + xtractorRadius;  sy++, a++) {

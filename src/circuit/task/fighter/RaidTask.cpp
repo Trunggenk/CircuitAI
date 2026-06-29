@@ -406,14 +406,14 @@ void CRaidTask::FallbackRaid()
 	const AIFloat3& threatPos = leader->GetTravelAct()->IsActive() ? position : pos;
 	if (attackPower * powerMod <= threatMap->GetThreatAt(leader, threatPos)) {
 		AIFloat3 nextPos = circuit->GetMilitaryManager()->GetScoutPosition(leader);
-		if (utils::is_equal_pos(nextPos, pos)) {
+		if (geom::is_equal_pos(nextPos, pos)) {
 			return;
 		} else {
 			position = nextPos;
 		}
 	}
 
-	if (!utils::is_valid(position)) {
+	if (!geom::is_valid(position)) {
 		position = terrainMgr->GetRandomMovePosition(leader);
 	}
 

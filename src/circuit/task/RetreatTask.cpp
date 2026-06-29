@@ -139,7 +139,7 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 	if (isNoEndPos) {
 		CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 		endPos = factoryMgr->GetClosestHaven(unit);
-		if (!utils::is_valid(endPos)) {
+		if (!geom::is_valid(endPos)) {
 			endPos = circuit->GetSetupManager()->GetBasePos();
 
 			// Check home safety, find new one otherwise
@@ -227,7 +227,7 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 
 	CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 	AIFloat3 haven = (repairer != nullptr) ? repairer->GetPos(frame) : factoryMgr->GetClosestHaven(unit);
-	if (!utils::is_valid(haven)) {
+	if (!geom::is_valid(haven)) {
 		haven = circuit->GetSetupManager()->GetBasePos();
 	}
 
@@ -272,7 +272,7 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 				};
 				AIFloat3 freePos = terrainMgr->FindBuildSite(cdef, pos, maxDist, UNIT_NO_FACING, predicate, true);
 //				AIFloat3 freePos = terrainMgr->FindSpringBuildSite(cdef, pos, maxDist, UNIT_NO_FACING, predicate);
-				pos = utils::is_valid(freePos) ? freePos : pos;
+				pos = geom::is_valid(freePos) ? freePos : pos;
 			}
 			TRY_UNIT(circuit, unit,
 //				unit->CmdPriority(0);
@@ -407,7 +407,7 @@ void CRetreatTask::ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep
 	} else {
 		CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 		endPos = factoryMgr->GetClosestHaven(unit);
-		if (!utils::is_valid(endPos)) {
+		if (!geom::is_valid(endPos)) {
 			endPos = circuit->GetSetupManager()->GetBasePos();
 		}
 		range = factoryMgr->GetAssistRange() * 0.6f + pathfinder->GetSquareSize();

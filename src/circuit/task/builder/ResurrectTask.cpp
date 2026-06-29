@@ -81,7 +81,7 @@ bool CBResurrectTask::Execute(CCircuitUnit* unit)
 	const int frame = circuit->GetLastFrame();
 	AIFloat3 pos;
 	float rezzRadius;
-	if ((radius == .0f) || !utils::is_valid(position)) {
+	if ((radius == .0f) || !geom::is_valid(position)) {
 		pos = circuit->GetTerrainManager()->GetTerrainCenter();
 		rezzRadius = pos.Length2D();
 	} else {

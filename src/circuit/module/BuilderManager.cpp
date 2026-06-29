@@ -835,7 +835,7 @@ void CBuilderManager::FallbackTask(CCircuitUnit* unit)
 
 bool CBuilderManager::IsBuilderInArea(CCircuitDef* buildDef, const AIFloat3& position) const
 {
-	if (!utils::is_valid(position)) {  // any-area task
+	if (!geom::is_valid(position)) {  // any-area task
 		return true;
 	}
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
@@ -1048,7 +1048,7 @@ IBuilderTask* CBuilderManager::MakeEnergizerTask(CCircuitUnit* unit, const CQuer
 
 			// Check time-distance to target
 			const AIFloat3& bp = candidate->GetPosition();
-			AIFloat3 buildPos = utils::is_valid(bp) ? bp : pos;
+			AIFloat3 buildPos = geom::is_valid(bp) ? bp : pos;
 
 			if (candidate->GetPriority() == IBuilderTask::Priority::NOW) {
 				// Disregard safety
@@ -1168,7 +1168,7 @@ IBuilderTask* CBuilderManager::MakeCommPeaceTask(CCircuitUnit* unit, const CQuer
 
 			// Check time-distance to target
 			const AIFloat3& bp = candidate->GetPosition();
-			AIFloat3 buildPos = utils::is_valid(bp) ? bp : pos;
+			AIFloat3 buildPos = geom::is_valid(bp) ? bp : pos;
 
 			if (candidate->GetPriority() == IBuilderTask::Priority::NOW) {
 				// Disregard safety
@@ -1275,7 +1275,7 @@ IBuilderTask* CBuilderManager::MakeCommDangerTask(CCircuitUnit* unit, const CQue
 
 			// Check time-distance to target
 			const AIFloat3& bp = candidate->GetPosition();
-			AIFloat3 buildPos = utils::is_valid(bp) ? bp : pos;
+			AIFloat3 buildPos = geom::is_valid(bp) ? bp : pos;
 
 			if (candidate->GetPriority() == IBuilderTask::Priority::NOW) {
 				// Disregard safety
@@ -1404,7 +1404,7 @@ IBuilderTask* CBuilderManager::MakeBuilderTask(CCircuitUnit* unit, const CQueryC
 
 			// Check time-distance to target
 			const AIFloat3& bp = candidate->GetPosition();
-			AIFloat3 buildPos = utils::is_valid(bp) ? bp : pos;
+			AIFloat3 buildPos = geom::is_valid(bp) ? bp : pos;
 
 			if (candidate->GetPriority() == IBuilderTask::Priority::NOW) {
 				// Disregard safety

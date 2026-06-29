@@ -100,7 +100,7 @@ bool CBMexUpTask::Execute(CCircuitUnit* unit)
 		)
 		return true;
 	}
-	if (utils::is_valid(buildPos)
+	if (geom::is_valid(buildPos)
 		&& circuit->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing))
 	{
 		TRY_UNIT(circuit, unit,
@@ -115,7 +115,7 @@ bool CBMexUpTask::Execute(CCircuitUnit* unit)
 	const float searchRadius = /*buildDef->GetDef()->GetResourceExtractorRange(metalRes) + */SQUARE_SIZE * 4;
 	FindBuildSite(unit, position, searchRadius);
 
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		TRY_UNIT(circuit, unit,
 			unit->CmdBuild(buildDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)

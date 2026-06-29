@@ -61,6 +61,7 @@ IBuilderTask::IBuilderTask(ITaskModule* mgr, Priority priority,
 		, position(position)
 		, shake(shake)
 		, buildDef(buildDef)
+		, canAutoAbort(true)
 		, buildPower({0.f, 0.f})
 		, cost(cost)
 		, target(nullptr)
@@ -82,6 +83,7 @@ IBuilderTask::IBuilderTask(ITaskModule* mgr, Type type, BuildType buildType)
 		, position(-RgtVector)
 		, shake(0.f)
 		, buildDef(nullptr)
+		, canAutoAbort(true)
 		, buildPower({0.f, 0.f})
 		, cost({0.f, 0.f})
 		, target(nullptr)
@@ -126,7 +128,7 @@ void IBuilderTask::AssignTo(CCircuitUnit* unit)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	ShowAssignee(unit);
-	if (!utils::is_valid(position)) {
+	if (!geom::is_valid(position)) {
 		position = unit->GetPos(circuit->GetLastFrame());
 	}
 	if (initiator == nullptr) {  // unit->IsAttrSolo()
@@ -236,7 +238,7 @@ void IBuilderTask::Finish()
 
 void IBuilderTask::Cancel()
 {
-	if ((target == nullptr) && utils::is_valid(buildPos)) {
+	if ((target == nullptr) && geom::is_valid(buildPos)) {
 		SetBuildPos(-RgtVector);
 	}
 
@@ -259,7 +261,7 @@ bool IBuilderTask::Execute(CCircuitUnit* unit)
 		)
 		return true;
 	}
-	if (utils::is_valid(buildPos)
+	if (geom::is_valid(buildPos)
 		&& circuit->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing))
 	{
 		TRY_UNIT(circuit, unit,
@@ -286,18 +288,18 @@ bool IBuilderTask::Execute(CCircuitUnit* unit)
 	}
 
 	// Alter/randomize position
-	AIFloat3 pos = (shake > .0f) ? utils::get_near_pos(position, shake) : position;
+	AIFloat3 pos = (shake > .0f) ? geom::get_near_pos(position, shake) : position;
 	CTerrainManager::CorrectPosition(pos);
 
 	const float searchRadius = 200 * SQUARE_SIZE;
 	FindBuildSite(unit, pos, searchRadius);
 
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		TRY_UNIT(circuit, unit,
 			unit->CmdBuild(buildDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)
 	} else {
-		if (circuit->GetSetupManager()->GetBasePos().SqDistance2D(position) < SQUARE(searchRadius)) {  // base must be full
+		if (geom::is_in_range(circuit->GetSetupManager()->GetBasePos(), position, searchRadius)) {  // base must be full
 			circuit->GetSetupManager()->FindNewBase(unit);
 		}
 
@@ -336,7 +338,7 @@ void IBuilderTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 	CRetreatTask* task = manager->EnqueueRetreat();
 	manager->AssignTask(unit, task);
 
-	if (target == nullptr) {
+	if (canAutoAbort && (target == nullptr)) {
 		manager->AbortTask(this);  // Doesn't call RemoveAssignee
 	}
 }
@@ -345,7 +347,7 @@ void IBuilderTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	RemoveAssignee(unit);
 	// NOTE: AbortTask usually does not call RemoveAssignee for each unit
-	if (((target == nullptr) || units.empty()) && !unit->IsMorphing()) {
+	if (canAutoAbort && ((target == nullptr) || units.empty()) && !unit->IsMorphing()) {
 		manager->AbortTask(this);
 	}
 }
@@ -368,10 +370,10 @@ void IBuilderTask::Deactivate()
 void IBuilderTask::SetBuildPos(const AIFloat3& pos)
 {
 	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		terrainMgr->DelBlocker(buildDef, buildPos, facing);
 	}
-	if (utils::is_valid(pos)) {
+	if (geom::is_valid(pos)) {
 		buildPos = CTerrainManager::Pos2BuildPos(buildDef, pos, facing);
 		terrainMgr->AddBlocker(buildDef, buildPos, facing);
 	} else {
@@ -383,7 +385,7 @@ void IBuilderTask::SetTarget(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		terrainMgr->DelBlocker(buildDef, buildPos, facing);
 	}
 	target = unit;
@@ -394,7 +396,7 @@ void IBuilderTask::SetTarget(CCircuitUnit* unit)
 	} else {
 		buildPos = -RgtVector;
 	}
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		terrainMgr->AddBlocker(buildDef, buildPos, facing);
 	}
 }
@@ -419,7 +421,7 @@ bool IBuilderTask::IsEqualBuildPos(CCircuitUnit* unit) const
 	pos += unit->GetCircuitDef()->GetMidPosOffset(unit->GetUnit()->GetBuildingFacing());
 	// NOTE: Unit's position is affected by collisionVolumeOffsets, and there is no way to retrieve it.
 	//       Hence absurdly large error slack, @see factoryship.lua
-	return utils::is_equal_pos(pos, buildPos, SQUARE_SIZE * 2);
+	return geom::is_equal_pos(pos, buildPos, SQUARE_SIZE * 2);
 }
 
 CCircuitUnit* IBuilderTask::GetNextAssignee()
@@ -448,8 +450,9 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 
 	// FIXME: Replace const 1000.0f with build time?
 	CEconomyManager* ecoMgr = circuit->GetEconomyManager();
-	if ((cost.metal > 1000.f)
+	if (canAutoAbort
 		&& (target == nullptr)
+		&& (cost.metal > 1000.f)
 		&& (((ecoMgr->GetAvgMetalIncome() < savedIncome.metal * 0.6f) && (ecoMgr->GetAvgMetalIncome() * 2.0f < ecoMgr->GetMetalPull()))
 			|| ((ecoMgr->GetAvgEnergyIncome() < savedIncome.energy * 0.6f) && (ecoMgr->GetAvgEnergyIncome() * 2.0f < ecoMgr->GetEnergyPull())))
 		)
@@ -462,9 +465,10 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 	 * Reassign task if required
 	 */
 	const int frame = circuit->GetLastFrame();
+	CCircuitDef* cdef = unit->GetCircuitDef();
 	const AIFloat3& pos = unit->GetPos(frame);
-	const float sqDist = pos.SqDistance2D(GetPosition());
-	if (sqDist <= SQUARE(unit->GetCircuitDef()->GetBuildDistance() + circuit->GetPathfinder()->GetSquareSize())
+	const float buildRangeExt = cdef->GetBuildDistance() + circuit->GetPathfinder()->GetSquareSize();
+	if (geom::is_in_range(pos, GetPosition(), buildRangeExt)
 		&& (circuit->GetInflMap()->GetInfluenceAt(pos) > -INFL_EPS))
 	{
 //		if (unit->GetCircuitDef()->IsRoleComm()) {  // FIXME: or any other builder-attacker
@@ -477,11 +481,11 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 
 		// NOTE: helps with obstructed factory, but not with blocked building plan.
 		//       @see CTerrainManager::CheckObstruct and its issues.
-		if ((unit->GetCircuitDef()->GetMobileId() >= 0) && circuit->GetTerrainManager()->IsObstruct(pos)) {
+		if ((cdef->GetMobileId() >= 0) && circuit->GetTerrainManager()->IsObstruct(pos)) {
 			if ((unit->GetTaskFrame() + FRAMES_PER_SEC * 5 < frame) && (unit->GetUnit()->GetVel().SqLength2D() < 1e-3f)) {
 				unit->SetTaskFrame(frame);  // re-use taskFrame
 				TRY_UNIT(circuit, unit,
-					AIFloat3 awayPos = utils::get_radial_pos(pos, 64.f);
+					AIFloat3 awayPos = geom::get_radial_pos(pos, 64.f);
 					CTerrainManager::CorrectPosition(awayPos);
 					unit->CmdMoveTo(awayPos, UNIT_CMD_OPTION, frame + FRAMES_PER_SEC * 60);
 				)
@@ -508,6 +512,9 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 			unit->CmdWait(false);
 		)
 	}
+	if (unit->IsAttrNoDisrupt()) {
+		return true;
+	}
 	HideAssignee(unit);
 	IUnitTask* task = manager->MakeTask(unit);
 	ShowAssignee(unit);
@@ -529,7 +536,7 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float range = cdef->GetBuildDistance();
 	const AIFloat3& endPos = GetPosition();
-	if ((target == nullptr)
+	if (canAutoAbort && (target == nullptr)
 		&& !circuit->GetTerrainManager()->CanReachAtSafe(unit, endPos, range, cdef->GetPower()))
 	{
 		manager->AbortTask(this);
@@ -537,10 +544,12 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	}
 
 	const AIFloat3& startPos = unit->GetPos(circuit->GetLastFrame());
+	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
+	const float baseDefRange = circuit->GetMilitaryManager()->GetBaseDefRange();
 
-	if ((startPos.SqDistance2D(endPos) < SQUARE(range))
-		|| ((circuit->GetSetupManager()->GetBasePos().SqDistance2D(startPos) < SQUARE(circuit->GetMilitaryManager()->GetBaseDefRange()))
-			&& (circuit->GetSetupManager()->GetBasePos().SqDistance2D(endPos) < SQUARE(circuit->GetMilitaryManager()->GetBaseDefRange()))))
+	if (geom::is_in_range(startPos, endPos, range)
+		|| (geom::is_in_range(basePos, startPos, baseDefRange)
+			&& (geom::is_in_range(basePos, endPos, baseDefRange))))
 	{
 		unit->GetTravelAct()->StateFinish();
 		return;
@@ -703,7 +712,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 				//        @see rts/Sim/Misc/QaudField.cpp
 				//        ...CQuadField::GetUnitsExact(const float3& pos, float radius, bool spherical)
 				//        const float totRad = radius + u->radius; -- suspicious
-				if ((*p->GetCircuitDef() == *pylonDef) && (buildPos.SqDistance2D(p->GetPos(frame)) < SQUARE(radius))) {
+				if ((*p->GetCircuitDef() == *pylonDef) && (geom::is_in_range(buildPos, p->GetPos(frame), radius))) {
 					foundPylon = true;
 					break;
 				}
@@ -729,17 +738,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 	}
 
 	if (chain->isPorc) {
-//		CEconomyManager* economyMgr = circuit->GetEconomyManager();
-//		const float metalIncome = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome());
-//		if (metalIncome > 10) {
-			circuit->GetMilitaryManager()->MakeDefence(buildPos);
-//		} else {
-//			CMetalManager* metalMgr = circuit->GetMetalManager();
-//			int index = metalMgr->FindNearestCluster(buildPos);
-//			if ((index >= 0) && (/*metalMgr->IsClusterQueued(index) || */metalMgr->IsClusterFinished(index))) {
-//				circuit->GetMilitaryManager()->MakeDefence(index, buildPos);
-//			}
-//		}
+		circuit->GetMilitaryManager()->MakeDefence(buildPos);
 	}
 
 	if (chain->isTerra) {
@@ -864,6 +863,7 @@ void IBuilderTask::ExecuteChain(SBuildChain* chain)
 	utils::binary_##func(stream, positionF3);			\
 	utils::binary_##func(stream, shake);				\
 	utils::binary_##func(stream, bdefId);				\
+	utils::binary_##func(stream, canAutoAbort);			\
 	utils::binary_##func(stream, cost.metal);			\
 	utils::binary_##func(stream, cost.energy);			\
 	utils::binary_##func(stream, targetId);				\

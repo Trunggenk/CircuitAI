@@ -196,7 +196,7 @@ ISquadTask* ISquadTask::CheckMergeTask()
 		const ISquadTask* candy = static_cast<const ISquadTask*>(candidate);
 
 		const AIFloat3& tp = candy->GetLeaderPos(frame);
-		const AIFloat3& taskPos = utils::is_valid(tp) ? tp : pos;
+		const AIFloat3& taskPos = geom::is_valid(tp) ? tp : pos;
 
 		if (!terrainMgr->CanMoveToPos(area, taskPos)) {  // ensure that path always exists
 			continue;
@@ -315,7 +315,7 @@ bool ISquadTask::IsMustRegroup()
 	}
 
 	if (!wasRegroup && (State::REGROUP == state)) {
-		if (utils::is_equal_pos(prevGroupPos, groupPos)) {
+		if (geom::is_equal_pos(prevGroupPos, groupPos)) {
 			TRY_UNIT(circuit, leader,
 				leader->CmdStop();
 				leader->CmdSetMoveState(CCircuitDef::MoveType::ROAM);

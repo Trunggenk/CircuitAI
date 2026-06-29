@@ -1356,7 +1356,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		{
 			buildPos = setupMgr->GetSmallEnergyPos();
 		} else {
-			buildPos = position + (position - terrainMgr->GetTerrainCenter()).Normalize2D() * (bestDef->GetRadius() + SQUARE_SIZE * 6);  // utils::get_radial_pos(position, bestDef->GetRadius() + SQUARE_SIZE * 6);
+			buildPos = position + (position - terrainMgr->GetTerrainCenter()).Normalize2D() * (bestDef->GetRadius() + SQUARE_SIZE * 6);  // geom::get_radial_pos(position, bestDef->GetRadius() + SQUARE_SIZE * 6);
 		}
 		CTerrainManager::CorrectPosition(buildPos);
 	} else {
@@ -1365,7 +1365,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 		buildPos = circuit->GetTerrainManager()->GetBuildPosition(bdef, buildPos);
 	}
 
-	if (utils::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&
+	if (geom::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&
 		((unit == nullptr) || terrainMgr->CanReachAtSafe(unit, buildPos, unit->GetCircuitDef()->GetBuildDistance())))
 	{
 		IBuilderTask::Priority priority = isEnergyStalling
@@ -1500,7 +1500,7 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 	}
 	if ((engyFactor < energyPower) || IsEnergyStalling()) {
 		isEnergyRequired = true;  // enough metal, request energy
-		UpdateEnergyTasks(utils::is_valid(position) ? position : circuit->GetSetupManager()->GetBasePos(), unit);
+		UpdateEnergyTasks(geom::is_valid(position) ? position : circuit->GetSetupManager()->GetBasePos(), unit);
 		return nullptr;
 	}
 	if (!isStart && !circuit->IsSlave() && !factoryMgr->IsSwitchAllowed(facDef)) {
@@ -1676,7 +1676,7 @@ IBuilderTask* CEconomyManager::UpdatePylonTasks()
 		return nullptr;
 	}
 
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		IBuilderTask::Priority priority = metalIncome < 40 ? IBuilderTask::Priority::NORMAL : IBuilderTask::Priority::HIGH;
 		return builderMgr->Enqueue(TaskB::Pylon(priority, buildDef, buildPos, link, buildDef->GetCostM()));
 	} else {
@@ -1897,7 +1897,7 @@ bool CEconomyManager::CheckAirpadRequired(const AIFloat3& position, CCircuitUnit
 		bdef = unit->GetCircuitDef();
 		buildPos = factoryMgr->GetClosestHaven(unit);
 	}
-	if (!utils::is_valid(buildPos)) {
+	if (!geom::is_valid(buildPos)) {
 		buildPos = circuit->GetSetupManager()->GetBasePos();
 	}
 	buildPos = terrainMgr->GetBuildPosition(bdef, buildPos);

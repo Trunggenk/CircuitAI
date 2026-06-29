@@ -83,6 +83,7 @@
 		// "no_dgun" - do not use DGun
 		// "anti_stat" - only static targets
 		// "no_repair" - do not repair marked unit
+		// "no_disrupt" - do not disrupt from assigned build-task
 //		"attribute": ["boost", "no_strafe"],
 
 		// Fire state (fire at will by default)

@@ -47,7 +47,7 @@ void CRecruitTask::AssignTo(CCircuitUnit* unit)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	ShowAssignee(unit);
-	if (!utils::is_valid(position)) {
+	if (!geom::is_valid(position)) {
 		position = unit->GetPos(circuit->GetLastFrame());
 	}
 
@@ -181,7 +181,7 @@ bool CRecruitTask::Execute(CCircuitUnit* unit)
 		buildPos = unit->GetPos(frame);
 	}
 
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		TRY_UNIT(circuit, unit,
 			unit->CmdBuild(buildDef, buildPos, UNIT_NO_FACING, 0, frame + FRAMES_PER_SEC * 10);
 		)

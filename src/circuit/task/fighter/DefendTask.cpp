@@ -85,11 +85,11 @@ void CDefendTask::Start(CCircuitUnit* unit)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	AIFloat3 pos = utils::get_radial_pos(position, SQUARE_SIZE * 32);
+	AIFloat3 pos = geom::get_radial_pos(position, SQUARE_SIZE * 32);
 	CTerrainManager::CorrectPosition(pos);
 	AIFloat3 freePos = terrainMgr->FindBuildSite(unit->GetCircuitDef(), pos, 300.0f, UNIT_NO_FACING, true);
 //	AIFloat3 freePos = terrainMgr->FindSpringBuildSite(unit->GetCircuitDef(), pos, 300.0f, UNIT_NO_FACING);
-	pos = utils::is_valid(freePos) ? freePos : pos;
+	pos = geom::is_valid(freePos) ? freePos : pos;
 
 	TRY_UNIT(circuit, unit,
 		unit->CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);

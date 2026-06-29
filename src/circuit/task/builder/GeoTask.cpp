@@ -45,7 +45,7 @@ CBGeoTask::~CBGeoTask()
 
 void CBGeoTask::Cancel()
 {
-	if ((target == nullptr) && utils::is_valid(buildPos)) {
+	if ((target == nullptr) && geom::is_valid(buildPos)) {
 		if (spotId >= 0) {  // for broken Load
 			manager->GetCircuit()->GetEconomyManager()->SetOpenGeoSpot(spotId, true);
 		}

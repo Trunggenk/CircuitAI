@@ -173,7 +173,7 @@ void CBombTask::Update()
 		return;
 	}
 
-	if (!utils::is_valid(position)) {
+	if (!geom::is_valid(position)) {
 		FallbackBasePos();
 		return;
 	}

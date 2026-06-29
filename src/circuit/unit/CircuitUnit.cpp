@@ -285,32 +285,32 @@ void CCircuitUnit::CmdRemove(std::vector<float>&& params, short options)
 
 void CCircuitUnit::CmdMoveTo(const AIFloat3& pos, short options, int timeout)
 {
-	assert(utils::is_in_map(pos));
+	assert(geom::is_in_map(pos));
 	unit->MoveTo(pos, options, timeout);
 //	unit->ExecuteCustomCommand(CMD_RAW_MOVE, {pos.x, pos.y, pos.z}, options, timeout);
 }
 
 void CCircuitUnit::CmdJumpTo(const AIFloat3& pos, short options, int timeout)
 {
-//	assert(utils::is_in_map(pos));
+//	assert(geom::is_in_map(pos));
 //	unit->ExecuteCustomCommand(CMD_JUMP, {pos.x, pos.y, pos.z}, options, timeout);
 }
 
 void CCircuitUnit::CmdFightTo(const AIFloat3& pos, short options, int timeout)
 {
-	assert(utils::is_in_map(pos));
+	assert(geom::is_in_map(pos));
 	unit->Fight(pos, options, timeout);
 }
 
 void CCircuitUnit::CmdPatrolTo(const AIFloat3& pos, short options, int timeout)
 {
-	assert(utils::is_in_map(pos));
+	assert(geom::is_in_map(pos));
 	unit->PatrolTo(pos, options, timeout);
 }
 
 void CCircuitUnit::CmdAttackGround(const AIFloat3& pos, short options, int timeout)
 {
-	assert(utils::is_in_map(pos));
+	assert(geom::is_in_map(pos));
 	unit->ExecuteCustomCommand(CMD_ATTACK_GROUND, {pos.x, pos.y, pos.z}, options, timeout);
 }
 
@@ -551,7 +551,7 @@ void CCircuitUnit::Guard(CCircuitUnit* target, int timeout)
 
 void CCircuitUnit::Gather(const AIFloat3& groupPos, int timeout)
 {
-//	const AIFloat3& pos = utils::get_radial_pos(groupPos, SQUARE_SIZE * 8);
+//	const AIFloat3& pos = geom::get_radial_pos(groupPos, SQUARE_SIZE * 8);
 	TRY_UNIT(manager->GetCircuit(), this,
 		CmdMoveTo(groupPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		CmdWantedSpeed(NO_SPEED_LIMIT);

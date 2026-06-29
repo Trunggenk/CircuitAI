@@ -464,7 +464,7 @@ bool CTerrainManager::IsObstruct(const AIFloat3& pos) const
 //
 //	const int2 t = cs[facing] - exts[facing] + dirs[facing];  // +dirs[facing] is slack, engine ignores short move-order
 //	if ((numTry >= NUM_TRIES) || !blockingMap.IsInBounds(t.x, t.y)) {
-//		return utils::get_radial_pos(pos, 64.f);
+//		return geom::get_radial_pos(pos, 64.f);
 //	}
 //
 //	return AIFloat3(t.x * (SQUARE_SIZE * 2) + SQUARE_SIZE, 0, t.y * (SQUARE_SIZE * 2) + SQUARE_SIZE);
@@ -513,7 +513,7 @@ void CTerrainManager::AddBusPath(CCircuitUnit* unit, const AIFloat3& toPos, CCir
 			startPos += AIFloat3(-edgeXH, 0.f, 0.f);
 		} break;
 	}
-	if (!utils::is_in_map(startPos) || !CanMoveToPos(area, startPos)) {
+	if (!geom::is_in_map(startPos) || !CanMoveToPos(area, startPos)) {
 		startPos -= sectorStep;
 	}
 
@@ -629,7 +629,7 @@ AIFloat3 CTerrainManager::GetBusPos(CCircuitDef* facDef, const AIFloat3& pos, in
 			AIFloat3 buildPos = pathPos + faceOffs[facing];
 			CTerrainManager::CorrectPosition(buildPos);
 			buildPos = FindBuildSite(facDef, buildPos, searchRadius, facing, false, true);
-			if (utils::is_valid(buildPos)) {
+			if (geom::is_valid(buildPos)) {
 				outFacing = facing;
 				return buildPos;
 			}
@@ -1705,12 +1705,12 @@ AIFloat3 CTerrainManager::ShiftPos(CCircuitDef* cdef, const AIFloat3& position, 
 {
 	AIFloat3 newPos;
 	if (clusterId < 0) {
-		newPos = utils::get_radial_pos(position, range);
+		newPos = geom::get_radial_pos(position, range);
 	} else {
 		const CMetalData::Clusters& clusters = circuit->GetMetalManager()->GetClusters();
 		const CMetalData::SCluster& cluster = clusters[clusterId];
 		if (cluster.idxSpots.size() == 1) {
-			newPos = utils::get_radial_pos(position, range);
+			newPos = geom::get_radial_pos(position, range);
 		} else {
 			if (isOrtho) {
 				const AIFloat3 shift = (cluster.position - position).Normalize2D();
@@ -1728,7 +1728,7 @@ AIFloat3 CTerrainManager::ShiftPos(CCircuitDef* cdef, const AIFloat3& position, 
 				}
 			} else {
 				if (cluster.position.SqDistance2D(position) < SQUARE(SQUARE_SIZE)) {
-					newPos = utils::get_radial_pos(position, range);
+					newPos = geom::get_radial_pos(position, range);
 				} else {
 					newPos = position + (cluster.position - position).Normalize2D() * range;
 				}

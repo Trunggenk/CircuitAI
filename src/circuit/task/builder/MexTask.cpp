@@ -71,7 +71,7 @@ bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 
 void CBMexTask::Cancel()
 {
-	if ((target == nullptr) && utils::is_valid(buildPos)) {
+	if ((target == nullptr) && geom::is_valid(buildPos)) {
 		CCircuitAI* circuit = manager->GetCircuit();
 		if (spotId >= 0) {  // for broken Load
 			circuit->GetMetalManager()->SetOpenSpot(spotId, true);

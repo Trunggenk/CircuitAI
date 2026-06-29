@@ -26,7 +26,7 @@ CSupportTask::CSupportTask(ITaskModule* mgr)
 		: IFighterTask(mgr, FightType::SUPPORT, 1.f)
 {
 	const AIFloat3& pos = manager->GetCircuit()->GetSetupManager()->GetBasePos();
-	position = utils::get_radial_pos(pos, SQUARE_SIZE * 32);
+	position = geom::get_radial_pos(pos, SQUARE_SIZE * 32);
 }
 
 CSupportTask::~CSupportTask()
@@ -53,7 +53,7 @@ void CSupportTask::Start(CCircuitUnit* unit)
 	CTerrainManager::CorrectPosition(pos);
 	AIFloat3 freePos = terrainMgr->FindBuildSite(unit->GetCircuitDef(), pos, 300.0f, UNIT_NO_FACING, true);
 //	AIFloat3 freePos = terrainMgr->FindSpringBuildSite(unit->GetCircuitDef(), pos, 300.0f, UNIT_NO_FACING);
-	pos = utils::is_valid(freePos) ? freePos : pos;
+	pos = geom::is_valid(freePos) ? freePos : pos;
 
 	TRY_UNIT(circuit, unit,
 		unit->CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);

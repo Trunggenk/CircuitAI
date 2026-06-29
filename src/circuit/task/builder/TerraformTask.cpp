@@ -61,7 +61,7 @@ void CBTerraformTask::Start(CCircuitUnit* unit)
 	 * Terraform blank position
 	 */
 	if (targetId == -1) {
-		if (!utils::is_valid(buildPos)) {
+		if (!geom::is_valid(buildPos)) {
 			CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 			CTerrainManager::TerrainPredicate predicate = [terrainMgr, unit](const AIFloat3& p) {
 				return terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance());
@@ -69,7 +69,7 @@ void CBTerraformTask::Start(CCircuitUnit* unit)
 			CCircuitDef* cdef = circuit->GetBuilderManager()->GetTerraDef();
 			buildPos = terrainMgr->FindBuildSite(cdef, position, 600.0f, facing, predicate);
 		}
-		if (!utils::is_valid(buildPos)) {
+		if (!geom::is_valid(buildPos)) {
 			manager->DoneTask(this);
 			return;
 		}

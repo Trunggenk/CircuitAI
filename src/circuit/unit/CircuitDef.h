@@ -62,41 +62,43 @@ public:
 	using RoleM = std::underlying_type<RoleMask>::type;
 
 	/*
-	 * MELEE:     always move close to target, disregard attack range
-	 * BOOST:     boost speed on retreat
-	 * NO_JUMP:   disable jump on retreat
-	 * NO_STRAFE: isable gunship's strafe
-	 * STOCK:     stockpile weapon before any task
-	 * SIEGE:     mobile units use Fight instead of Move; arty ignores siege buildings
-	 * RET_HOLD:  hold fire on retreat
-	 * RET_FIGHT: fight on retreat
-	 * SOLO:      construction initiator, won't join task if already started
-	 * BASE:      base builder, high priority for energy and storage tasks
-	 * DG_COST:   DGun by metal cost instead of by threat
-	 * DG_STILL:  hold still after DGun activation
-	 * JUMP:      enable jump on regular move
-	 * ONOFF:     toggle weapon state, for mobile targets - state1, for static - state2
-	 * VAMPIRE:   reclaim enemy units without threat check
-	 * RARE:      build unit from T1 factory even when T2+ factory is available
-	 * FENCE:     unit counted in total cluster defence cost
-	 * REARM:     use CMD_FIND_PAD when weapon is not ready
-	 * NO_DGUN:   do not use DGun
-	 * ANTI_STAT: only static targets
-	 * NO_REPAIR: do not repair marked unit. Doesn't work with Patrol command or Ally units
+	 * MELEE:      always move close to target, disregard attack range
+	 * BOOST:      boost speed on retreat
+	 * NO_JUMP:    disable jump on retreat
+	 * NO_STRAFE:  disable gunship's strafe
+	 * STOCK:      stockpile weapon before any task
+	 * SIEGE:      mobile units use Fight instead of Move; arty ignores siege buildings
+	 * RET_HOLD:   hold fire on retreat
+	 * RET_FIGHT:  fight on retreat
+	 * SOLO:       construction initiator, won't join task if already started
+	 * BASE:       base builder, high priority for energy and storage tasks
+	 * DG_COST:    DGun by metal cost instead of by threat
+	 * DG_STILL:   hold still after DGun activation
+	 * JUMP:       enable jump on regular move
+	 * ONOFF:      toggle weapon state, for mobile targets - state1, for static - state2
+	 * VAMPIRE:    reclaim enemy units without threat check
+	 * RARE:       build unit from T1 factory even when T2+ factory is available
+	 * FENCE:      unit counted in total cluster defence cost
+	 * REARM:      use CMD_FIND_PAD when weapon is not ready
+	 * NO_DGUN:    do not use DGun
+	 * ANTI_STAT:  only static targets
+	 * NO_REPAIR:  do not repair marked unit. Doesn't work with Patrol command or Ally units
+	 * NO_DISRUPT: do not disrupt from assigned build-task
 	 */
 	enum class AttrType: RoleT {NONE = -1,
 		MELEE = 0, BOOST, NO_JUMP, NO_STRAFE,
 		STOCK, SIEGE, RET_HOLD, RET_FIGHT,
 		SOLO, BASE, DG_COST, DG_STILL,
 		JUMP, ONOFF, VAMPIRE, RARE,
-		FENCE, REARM, NO_DGUN, ANTI_STAT, NO_REPAIR, _SIZE_};
+		FENCE, REARM, NO_DGUN, ANTI_STAT,
+		NO_REPAIR, NO_DISRUPT, _SIZE_};
 	enum AttrMask: RoleM {
-		MELEE = 0x00000001, BOOST = 0x00000002, NO_JUMP  = 0x00000004, NO_STRAFE = 0x00000008,
-		STOCK = 0x00000010, SIEGE = 0x00000020, RET_HOLD = 0x00000040, RET_FIGHT = 0x00000080,
-		SOLO  = 0x00000100, BASE  = 0x00000200, DG_COST  = 0x00000400, DG_STILL  = 0x00000800,
-		JUMP  = 0x00001000, ONOFF = 0x00002000, VAMPIRE  = 0x00004000, RARE      = 0x00008000,
-		FENCE = 0x00010000, REARM = 0x00020000, NO_DGUN  = 0x00040000, ANTI_STAT = 0x00080000,
-		NO_REPAIR = 0x00100000};
+		MELEE     = 0x00000001, BOOST      = 0x00000002, NO_JUMP  = 0x00000004, NO_STRAFE = 0x00000008,
+		STOCK     = 0x00000010, SIEGE      = 0x00000020, RET_HOLD = 0x00000040, RET_FIGHT = 0x00000080,
+		SOLO      = 0x00000100, BASE       = 0x00000200, DG_COST  = 0x00000400, DG_STILL  = 0x00000800,
+		JUMP      = 0x00001000, ONOFF      = 0x00002000, VAMPIRE  = 0x00004000, RARE      = 0x00008000,
+		FENCE     = 0x00010000, REARM      = 0x00020000, NO_DGUN  = 0x00040000, ANTI_STAT = 0x00080000,
+		NO_REPAIR = 0x00100000, NO_DISRUPT = 0x00200000};
 	using AttrT = std::underlying_type<AttrType>::type;
 	using AttrM = std::underlying_type<AttrMask>::type;
 
@@ -165,27 +167,28 @@ public:
 	bool IsRoleSuper()    const { return role & RoleMask::SUPER; }
 	bool IsRoleComm()     const { return role & RoleMask::COMM; }
 
-	bool IsAttrMelee()    const { return attr & AttrMask::MELEE; }
-	bool IsAttrBoost()    const { return attr & AttrMask::BOOST; }
-	bool IsAttrNoJump()   const { return attr & AttrMask::NO_JUMP; }
-	bool IsAttrNoStrafe() const { return attr & AttrMask::NO_STRAFE; }
-	bool IsAttrStock()    const { return attr & AttrMask::STOCK; }
-	bool IsAttrSiege()    const { return attr & AttrMask::SIEGE; }
-	bool IsAttrRetHold()  const { return attr & AttrMask::RET_HOLD; }
-	bool IsAttrRetFight() const { return attr & AttrMask::RET_FIGHT; }
-	bool IsAttrSolo()     const { return attr & AttrMask::SOLO; }  // also per-unit
-	bool IsAttrBase()     const { return attr & AttrMask::BASE; }  // also per-unit
-	bool IsAttrDGCost()   const { return attr & AttrMask::DG_COST; }
-	bool IsAttrDGStill()  const { return attr & AttrMask::DG_STILL; }
-	bool IsAttrJump()     const { return attr & AttrMask::JUMP; }
-	bool IsAttrOnOff()    const { return attr & AttrMask::ONOFF; }
-	bool IsAttrVampire()  const { return attr & AttrMask::VAMPIRE; }
-	bool IsAttrRare()     const { return attr & AttrMask::RARE; }
-	bool IsAttrFence()    const { return attr & AttrMask::FENCE; }
-	bool IsAttrRearm()    const { return attr & AttrMask::REARM; }
-	bool IsAttrNoDGun()   const { return attr & AttrMask::NO_DGUN; }
-	bool IsAttrAntiStat() const { return attr & AttrMask::ANTI_STAT; }
-	bool IsAttrNoRepair() const { return attr & AttrMask::NO_REPAIR; }  // also per-unit
+	bool IsAttrMelee()     const { return attr & AttrMask::MELEE; }
+	bool IsAttrBoost()     const { return attr & AttrMask::BOOST; }
+	bool IsAttrNoJump()    const { return attr & AttrMask::NO_JUMP; }
+	bool IsAttrNoStrafe()  const { return attr & AttrMask::NO_STRAFE; }
+	bool IsAttrStock()     const { return attr & AttrMask::STOCK; }
+	bool IsAttrSiege()     const { return attr & AttrMask::SIEGE; }
+	bool IsAttrRetHold()   const { return attr & AttrMask::RET_HOLD; }
+	bool IsAttrRetFight()  const { return attr & AttrMask::RET_FIGHT; }
+	bool IsAttrSolo()      const { return attr & AttrMask::SOLO; }  // also per-unit
+	bool IsAttrBase()      const { return attr & AttrMask::BASE; }  // also per-unit
+	bool IsAttrDGCost()    const { return attr & AttrMask::DG_COST; }
+	bool IsAttrDGStill()   const { return attr & AttrMask::DG_STILL; }
+	bool IsAttrJump()      const { return attr & AttrMask::JUMP; }
+	bool IsAttrOnOff()     const { return attr & AttrMask::ONOFF; }
+	bool IsAttrVampire()   const { return attr & AttrMask::VAMPIRE; }
+	bool IsAttrRare()      const { return attr & AttrMask::RARE; }
+	bool IsAttrFence()     const { return attr & AttrMask::FENCE; }
+	bool IsAttrRearm()     const { return attr & AttrMask::REARM; }
+	bool IsAttrNoDGun()    const { return attr & AttrMask::NO_DGUN; }
+	bool IsAttrAntiStat()  const { return attr & AttrMask::ANTI_STAT; }
+	bool IsAttrNoRepair()  const { return attr & AttrMask::NO_REPAIR; }  // also per-unit
+	bool IsAttrNoDisrupt() const { return attr & AttrMask::NO_REPAIR; }  // also per-unit
 
 	bool IsHoldFire()   const { return fireState == FireType::HOLD; }
 	bool IsReturnFire() const { return fireState == FireType::RETURN; }

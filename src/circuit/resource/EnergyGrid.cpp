@@ -338,7 +338,7 @@ CEnergyNode* CEnergyGrid::FindNodeDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 		}
 
 		outPos = circuit->GetTerrainManager()->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_NO_FACING);
-		if (utils::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
+		if (geom::is_valid(outPos) && circuit->GetBuilderManager()->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {
 			outPos = -RgtVector;
@@ -401,7 +401,7 @@ CEnergyLink* CEnergyGrid::FindLinkDef(CCircuitDef*& outDef, AIFloat3& outPos, CE
 		}
 
 		outPos = terrainMgr->FindBuildSite(outDef, sweetPos, searchRadius, UNIT_NO_FACING);
-		if (utils::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)) {
+		if (geom::is_valid(outPos) && builderMgr->IsBuilderInArea(outDef, outPos)) {
 			break;
 		} else {
 			outPos = -RgtVector;

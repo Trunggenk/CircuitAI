@@ -87,7 +87,7 @@ bool IReclaimTask::Execute(CCircuitUnit* unit)
 
 	AIFloat3 pos;
 	float reclRadius;
-	if ((radius == .0f) || !utils::is_valid(position)) {
+	if ((radius == .0f) || !geom::is_valid(position)) {
 		pos = circuit->GetTerrainManager()->GetTerrainCenter();
 		reclRadius = pos.Length2D();
 	} else {

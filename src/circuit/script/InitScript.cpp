@@ -825,6 +825,7 @@ void CInitScript::RegisterIBuilderTask(asIScriptEngine* engine, const char* cls)
 	r = engine->RegisterObjectMethod(cls, "const AIFloat3& GetBuildPos() const", asMETHODPR(T, GetPosition, () const, const AIFloat3&), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty(cls, "CCircuitDef@ const buildDef", asOFFSET(T, buildDef)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty(cls, "CCircuitUnit@ const target", asOFFSET(T, target)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty(cls, "bool canAutoAbort", asOFFSET(T, canAutoAbort)); ASSERT(r >= 0);
 }
 
 template <class T>

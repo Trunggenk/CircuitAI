@@ -52,7 +52,7 @@ bool CBNanoTask::Execute(CCircuitUnit* unit)
 		)
 		return true;
 	}
-	if (utils::is_valid(buildPos)
+	if (geom::is_valid(buildPos)
 		&& circuit->GetMap()->IsPossibleToBuildAt(buildDef->GetDef(), buildPos, facing))
 	{
 		TRY_UNIT(circuit, unit,
@@ -62,13 +62,13 @@ bool CBNanoTask::Execute(CCircuitUnit* unit)
 	}
 
 	// Alter/randomize position
-	AIFloat3 pos = (shake > .0f) ? utils::get_near_pos(position, shake) : position;
+	AIFloat3 pos = (shake > .0f) ? geom::get_near_pos(position, shake) : position;
 
 	circuit->GetThreatMap()->SetThreatType(unit);
 	float searchRadius = buildDef->GetBuildDistance();
 	FindBuildSite(unit, pos, searchRadius);
 
-	if (utils::is_valid(buildPos)) {
+	if (geom::is_valid(buildPos)) {
 		TRY_UNIT(circuit, unit,
 			unit->CmdBuild(buildDef, buildPos, facing, 0, frame + FRAMES_PER_SEC * 60);
 		)

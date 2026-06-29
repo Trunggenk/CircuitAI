@@ -297,12 +297,12 @@ void CScoutTask::FallbackScout(CCircuitUnit* unit, bool isUpdating)
 	bool proceed = isUpdating && (threatMap->GetThreatAt(unit, threatPos) < std::max(threatMap->GetUnitPower(unit), THREAT_MIN) * powerMod);
 	if (!proceed) {
 		position = circuit->GetMilitaryManager()->GetScoutPosition(unit);
-		if (utils::is_equal_pos(position, pos)) {
+		if (geom::is_equal_pos(position, pos)) {
 			return;
 		}
 	}
 
-	if (!utils::is_valid(position)) {
+	if (!geom::is_valid(position)) {
 		position = terrainMgr->GetRandomMovePosition(unit);
 	}
 

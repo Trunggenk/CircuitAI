@@ -37,27 +37,28 @@ TypeMask BUILDER2 = AiAddRole("builderT2",       BUILDER.type);
 }  // namespace Role
 
 namespace Attr {
-TypeMask MELEE     = aiAttrMasker.GetTypeMask("melee");
-TypeMask BOOST     = aiAttrMasker.GetTypeMask("boost");
-TypeMask NO_JUMP   = aiAttrMasker.GetTypeMask("no_jump");
-TypeMask NO_STRAFE = aiAttrMasker.GetTypeMask("no_strafe");
-TypeMask STOCK     = aiAttrMasker.GetTypeMask("stockpile");
-TypeMask SIEGE     = aiAttrMasker.GetTypeMask("siege");
-TypeMask RET_HOLD  = aiAttrMasker.GetTypeMask("ret_hold");
-TypeMask RET_FIGHT = aiAttrMasker.GetTypeMask("ret_fight");
-TypeMask SOLO      = aiAttrMasker.GetTypeMask("solo");
-TypeMask BASE      = aiAttrMasker.GetTypeMask("base");
-TypeMask DG_COST   = aiAttrMasker.GetTypeMask("dg_cost");
-TypeMask DG_STILL  = aiAttrMasker.GetTypeMask("dg_still");
-TypeMask JUMP      = aiAttrMasker.GetTypeMask("jump");
-TypeMask ONOFF     = aiAttrMasker.GetTypeMask("onoff");
-TypeMask VAMPIRE   = aiAttrMasker.GetTypeMask("vampire");
-TypeMask RARE      = aiAttrMasker.GetTypeMask("rare");
-TypeMask FENCE     = aiAttrMasker.GetTypeMask("fence");
-TypeMask REARM     = aiAttrMasker.GetTypeMask("rearm");
-TypeMask NO_DGUN   = aiAttrMasker.GetTypeMask("no_dgun");
-TypeMask ANTI_STAT = aiAttrMasker.GetTypeMask("anti_stat");
-TypeMask NO_REPAIR = aiAttrMasker.GetTypeMask("no_repair");
+TypeMask MELEE      = aiAttrMasker.GetTypeMask("melee");
+TypeMask BOOST      = aiAttrMasker.GetTypeMask("boost");
+TypeMask NO_JUMP    = aiAttrMasker.GetTypeMask("no_jump");
+TypeMask NO_STRAFE  = aiAttrMasker.GetTypeMask("no_strafe");
+TypeMask STOCK      = aiAttrMasker.GetTypeMask("stockpile");
+TypeMask SIEGE      = aiAttrMasker.GetTypeMask("siege");
+TypeMask RET_HOLD   = aiAttrMasker.GetTypeMask("ret_hold");
+TypeMask RET_FIGHT  = aiAttrMasker.GetTypeMask("ret_fight");
+TypeMask SOLO       = aiAttrMasker.GetTypeMask("solo");
+TypeMask BASE       = aiAttrMasker.GetTypeMask("base");
+TypeMask DG_COST    = aiAttrMasker.GetTypeMask("dg_cost");
+TypeMask DG_STILL   = aiAttrMasker.GetTypeMask("dg_still");
+TypeMask JUMP       = aiAttrMasker.GetTypeMask("jump");
+TypeMask ONOFF      = aiAttrMasker.GetTypeMask("onoff");
+TypeMask VAMPIRE    = aiAttrMasker.GetTypeMask("vampire");
+TypeMask RARE       = aiAttrMasker.GetTypeMask("rare");
+TypeMask FENCE      = aiAttrMasker.GetTypeMask("fence");
+TypeMask REARM      = aiAttrMasker.GetTypeMask("rearm");
+TypeMask NO_DGUN    = aiAttrMasker.GetTypeMask("no_dgun");
+TypeMask ANTI_STAT  = aiAttrMasker.GetTypeMask("anti_stat");
+TypeMask NO_REPAIR  = aiAttrMasker.GetTypeMask("no_repair");
+TypeMask NO_DISRUPT = aiAttrMasker.GetTypeMask("no_disrupt");
 }  // namespace Attr
 
 enum UseAs {

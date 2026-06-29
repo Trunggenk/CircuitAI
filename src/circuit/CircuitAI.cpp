@@ -86,7 +86,7 @@ using namespace terrain;
  * Видеть в братьях мишени...
  */
 constexpr char version[]{"1.6.26"};
-constexpr uint32_t VERSION_SAVE = 4;
+constexpr uint32_t VERSION_SAVE = 5;
 
 std::unique_ptr<CGameAttribute> CCircuitAI::gameAttribute(nullptr);
 unsigned int CCircuitAI::gaCounter = 0;

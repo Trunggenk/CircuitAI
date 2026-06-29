@@ -36,7 +36,7 @@ void CSReclaimTask::AssignTo(CCircuitUnit* unit)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	ShowAssignee(unit);
-	if (!utils::is_valid(position)) {
+	if (!geom::is_valid(position)) {
 		position = unit->GetPos(circuit->GetLastFrame());
 	}
 

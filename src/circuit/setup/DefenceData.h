@@ -63,10 +63,10 @@ private:
 	std::vector<SClusterInfo> clusterInfos;
 
 	DefPoints defPoints;  // starting part corresponds to choke points, rest are points in cluster
-	utils::SPointAdaptor<DefPoints> defAdaptor;
+	geom::SPointAdaptor<DefPoints> defAdaptor;
 	using DefTree = nanoflann::KDTreeSingleIndexAdaptor<
-			nanoflann::L2_Simple_Adaptor<float, utils::SPointAdaptor<DefPoints> >,
-			utils::SPointAdaptor<DefPoints>,
+			nanoflann::L2_Simple_Adaptor<float, geom::SPointAdaptor<DefPoints> >,
+			geom::SPointAdaptor<DefPoints>,
 			2 /* dim */, int>;
 	DefTree defTree;  // TODO: replace cluster points, currently unused
 

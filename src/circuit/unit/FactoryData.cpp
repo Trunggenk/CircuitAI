@@ -43,7 +43,7 @@ CCircuitDef* CFactoryData::GetFactoryToBuild(CCircuitAI* circuit, AIFloat3 posit
 	const bool isAirValid = circuit->GetEnemyManager()->IsAirValid();
 
 	std::function<bool (CCircuitDef*)> predicate;
-	bool isPosValid = utils::is_valid(position);
+	bool isPosValid = geom::is_valid(position);
 //	CTerrainManager::CorrectPosition(position);
 	if (isPosValid) {
 		CBuilderManager* builderMgr = circuit->GetBuilderManager();

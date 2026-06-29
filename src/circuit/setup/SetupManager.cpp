@@ -310,7 +310,7 @@ void CSetupManager::SetCommander(CCircuitUnit* unit)
 		return;
 	}
 	commChoice = commander->GetCircuitDef();
-	if (!utils::is_valid(basePos)) {
+	if (!geom::is_valid(basePos)) {
 		SetBasePos(unit->GetPos(circuit->GetLastFrame()));
 	}
 
@@ -485,7 +485,7 @@ void CSetupManager::Welcome() const
 
 void CSetupManager::FindStart()
 {
-	if (utils::is_valid(startPos)) {
+	if (geom::is_valid(startPos)) {
 		circuit->GetScheduler()->RemoveJob(findStart);
 		findStart = nullptr;
 
@@ -613,7 +613,7 @@ AIFloat3 CSetupManager::MakeStartPosOffset(const AIFloat3& pos, int clusterId, f
 	// offset towards cluster center
 	const AIFloat3 newPos = circuit->GetTerrainManager()->ShiftPos(commChoice, pos, clusterId, range);
 	// check new position
-	if (!utils::is_valid(newPos)) {
+	if (!geom::is_valid(newPos)) {
 		return pos;
 	}
 	Lua* lua = circuit->GetLua();

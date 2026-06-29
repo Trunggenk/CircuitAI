@@ -113,10 +113,10 @@ private:
 	ShortVec metalMap;
 	bwem::IGrid* terrain;
 	Metals spots;
-	utils::SPointAdaptor<Metals> spotsAdaptor;
+	geom::SPointAdaptor<Metals> spotsAdaptor;
 	using MetalTree = nanoflann::KDTreeSingleIndexAdaptor<
-			nanoflann::L2_Simple_Adaptor<float, utils::SPointAdaptor<Metals> >,
-			utils::SPointAdaptor<Metals>,
+			nanoflann::L2_Simple_Adaptor<float, geom::SPointAdaptor<Metals> >,
+			geom::SPointAdaptor<Metals>,
 			2 /* dim */, int>;
 	MetalTree metalTree;
 	float spotMinIncome;
@@ -125,10 +125,10 @@ private:
 	float spotStdDeviation;
 
 	Clusters clusters;
-	utils::SPointAdaptor<Clusters> clustersAdaptor;
+	geom::SPointAdaptor<Clusters> clustersAdaptor;
 	using ClusterTree = nanoflann::KDTreeSingleIndexAdaptor<
-			nanoflann::L2_Simple_Adaptor<float, utils::SPointAdaptor<Clusters> >,
-			utils::SPointAdaptor<Clusters>,
+			nanoflann::L2_Simple_Adaptor<float, geom::SPointAdaptor<Clusters> >,
+			geom::SPointAdaptor<Clusters>,
 			2 /* dim */, int>;
 	ClusterTree clusterTree;
 	float clusterMinIncome;

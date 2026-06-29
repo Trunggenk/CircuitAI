@@ -44,7 +44,7 @@ bool CBEnergyTask::CanAssignTo(CCircuitUnit* unit) const
 	const int frame = manager->GetCircuit()->GetLastFrame();
 	return (cost.metal > 200.0f) || !unit->GetCircuitDef()->IsRoleComm()
 		|| (GetPosition().SqDistance2D(unit->GetPos(frame)) < SQUARE((unit->GetCircuitDef()->GetBuildDistance() + 128.f)))
-		|| !utils::is_valid(GetBuildPos());
+		|| !geom::is_valid(GetBuildPos());
 }
 
 void CBEnergyTask::Update()

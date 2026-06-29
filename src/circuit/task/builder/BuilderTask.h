@@ -106,7 +106,7 @@ public:
 
 	virtual void SetBuildPos(const springai::AIFloat3& pos);
 	const springai::AIFloat3& GetBuildPos() const { return buildPos; }
-	const springai::AIFloat3& GetPosition() const { return utils::is_valid(buildPos) ? buildPos : position; }
+	const springai::AIFloat3& GetPosition() const { return geom::is_valid(buildPos) ? buildPos : position; }
 
 	virtual void SetTarget(CCircuitUnit* unit);
 	CCircuitUnit* GetTarget() const { return target; }
@@ -144,6 +144,7 @@ protected:
 	springai::AIFloat3 position;
 	float shake;  // Alter/randomize position by offset
 	CCircuitDef* buildDef;
+	bool canAutoAbort;
 
 	SResource buildPower;  // task's metal and energy per second expenditure
 	SResource cost;
