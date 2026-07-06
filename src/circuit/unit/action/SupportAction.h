@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CSupportAction: public IUnitAction {
+class CSupportAction final: public IUnitAction {
 public:
 	CSupportAction(CCircuitUnit* owner);
 	virtual ~CSupportAction();

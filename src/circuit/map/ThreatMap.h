@@ -24,12 +24,12 @@ class CMapManager;
 class CCircuitUnit;
 class IMainJob;
 
-class CThreatMap {
+class CThreatMap final {
 public:
 	friend class CInitScript;
 
 	CThreatMap(CMapManager* manager, float decloakRadius);
-	virtual ~CThreatMap();
+	~CThreatMap();
 
 	void ReadConfig();
 	void InitRanges();

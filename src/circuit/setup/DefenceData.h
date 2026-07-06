@@ -20,7 +20,7 @@ namespace circuit {
 class CCircuitAI;
 class CMetalManager;
 
-class CDefenceData {
+class CDefenceData final {
 public:
 	struct SDefPoint {
 		springai::AIFloat3 position;

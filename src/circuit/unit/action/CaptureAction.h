@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CCaptureAction: public IUnitAction {
+class CCaptureAction final: public IUnitAction {
 public:
 	CCaptureAction(CCircuitUnit* owner, float range);
 	virtual ~CCaptureAction();

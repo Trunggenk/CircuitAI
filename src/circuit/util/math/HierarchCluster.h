@@ -14,12 +14,12 @@ namespace circuit {
 
 template <class T> class CRagMatrix;
 
-class CHierarchCluster {
+class CHierarchCluster final {
 public:
 	using Clusters = std::vector<std::vector<int>>;
 
 	CHierarchCluster();
-	virtual ~CHierarchCluster();
+	~CHierarchCluster();
 
 	const Clusters& Clusterize(CRagMatrix<float>& distmatrix, float maxDistance);
 	const Clusters& GetClusters() const { return iclusters; }

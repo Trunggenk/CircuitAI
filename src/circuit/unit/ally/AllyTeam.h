@@ -37,7 +37,7 @@ class CDefenceData;
 class CPathFinder;
 class CFactoryData;
 
-class CAllyTeam {
+class CAllyTeam final {
 public:
 	using Id = int;
 	using AllyUnits = std::map<ICoreUnit::Id, CAllyUnit*>;

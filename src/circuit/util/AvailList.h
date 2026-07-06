@@ -19,7 +19,7 @@
 namespace circuit {
 
 template <typename T, typename S = std::function<float (CCircuitDef*, T&)>>
-class CAvailList {
+class CAvailList final {
 public:
 	struct SAvailInfo {
 		CCircuitDef* cdef;

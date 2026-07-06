@@ -19,7 +19,7 @@ namespace circuit {
 class CFactoryManager;
 class CCircuitDef;
 
-class CFactoryScript: public ITaskModuleScript {
+class CFactoryScript final: public ITaskModuleScript {
 public:
 	CFactoryScript(CScriptManager* scr, CFactoryManager* mgr);
 	virtual ~CFactoryScript();

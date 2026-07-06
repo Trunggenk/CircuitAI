@@ -12,12 +12,12 @@
 
 namespace circuit {
 
-class CApproxMNK {
+class CApproxMNK final {
 public:
 	using Vector = std::vector<float>;
 
 	CApproxMNK(unsigned int n, const Vector& X, const Vector& Y);
-	virtual ~CApproxMNK();
+	~CApproxMNK();
 
 	float GetValueAt(float x);
 

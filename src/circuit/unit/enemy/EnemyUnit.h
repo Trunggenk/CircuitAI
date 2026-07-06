@@ -184,12 +184,12 @@ public:
 /*
  * Per AI enemy information, bridge to connect tasks and common enemy data
  */
-class CEnemyInfo {
+class CEnemyInfo final {
 public:
 	CEnemyInfo(const CEnemyInfo& that) = delete;
 	CEnemyInfo& operator=(const CEnemyInfo&) = delete;
 	CEnemyInfo(CEnemyUnit* data);
-	virtual ~CEnemyInfo();
+	~CEnemyInfo();
 
 	void BindTask(IFighterTask* task) { tasks.insert(task); }
 	void UnbindTask(IFighterTask* task) { tasks.erase(task); }
@@ -231,7 +231,7 @@ private:
 /*
  * Per AllyTeam fake ghost enemy
  */
-class CEnemyFake: public CEnemyUnit {
+class CEnemyFake final: public CEnemyUnit {
 public:
 	CEnemyFake(const CEnemyInfo& that) = delete;
 	CEnemyFake& operator=(const CEnemyFake&) = delete;

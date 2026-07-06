@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CRearmAction: public IUnitAction {
+class CRearmAction final: public IUnitAction {
 public:
 	CRearmAction(CCircuitUnit* owner);
 	virtual ~CRearmAction();

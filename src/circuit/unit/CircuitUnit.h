@@ -65,7 +65,7 @@ class ITaskModule;
 class CDGunAction;
 class ITravelAction;
 
-class CCircuitUnit: public CAllyUnit, public CActionList {
+class CCircuitUnit final: public CAllyUnit, public CActionList {
 public:
 	friend class CInitScript;
 

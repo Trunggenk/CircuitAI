@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CAntiCapAction: public IUnitAction {
+class CAntiCapAction final: public IUnitAction {
 public:
 	CAntiCapAction(CCircuitUnit* owner);
 	virtual ~CAntiCapAction();

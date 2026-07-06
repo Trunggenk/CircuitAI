@@ -13,7 +13,7 @@
 
 namespace circuit {
 
-class CBGuardTask: public IBuilderTask {
+class CBGuardTask final: public IBuilderTask {
 public:
 	CBGuardTask(ITaskModule* mgr, Priority priority,
 				CCircuitUnit* vip, bool isInterrupt, int timeout);

@@ -12,11 +12,10 @@ struct SSkirmishAICallback;
 
 namespace circuit {
 
-class CEngine
-{
+class CEngine final {
 public:
 	CEngine(const struct SSkirmishAICallback* clb, int sAIId);
-	virtual ~CEngine();
+	~CEngine();
 
 	const char* GetVersionMajor() const;
 

@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CDefendTask: public ISquadTask {
+class CDefendTask final: public ISquadTask {
 public:
 	CDefendTask(ITaskModule* mgr, const springai::AIFloat3& position,
 				FightType check, FightType promote, float maxPower, float powerMod);

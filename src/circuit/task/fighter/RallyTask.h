@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CRallyTask: public IFighterTask {
+class CRallyTask final: public IFighterTask {
 public:
 	CRallyTask(ITaskModule* mgr, float maxPower);
 	virtual ~CRallyTask();

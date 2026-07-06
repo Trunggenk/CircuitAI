@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBResurrectTask: public IBuilderTask {
+class CBResurrectTask final: public IBuilderTask {
 public:
 	CBResurrectTask(ITaskModule* mgr, Priority priority, const springai::AIFloat3& position,
 					SResource cost, int timeout, float radius = .0f);

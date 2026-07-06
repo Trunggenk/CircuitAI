@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CArtilleryTask: public IFighterTask {
+class CArtilleryTask final: public IFighterTask {
 public:
 	CArtilleryTask(ITaskModule* mgr);
 	virtual ~CArtilleryTask();

@@ -13,7 +13,7 @@
 
 namespace circuit {
 
-class CBTerraformTask: public IBuilderTask {
+class CBTerraformTask final: public IBuilderTask {
 public:
 	CBTerraformTask(ITaskModule* mgr, Priority priority, CCircuitUnit* target, SResource cost = {1.f, 0.f}, int timeout = 0);
 	CBTerraformTask(ITaskModule* mgr, Priority priority, const springai::AIFloat3& position, SResource cost = {1.f, 0.f}, int timeout = 0);

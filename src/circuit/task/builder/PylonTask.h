@@ -14,7 +14,7 @@ namespace circuit {
 
 class IGridLink;
 
-class CBPylonTask: public IBuilderTask {
+class CBPylonTask final: public IBuilderTask {
 public:
 	CBPylonTask(ITaskModule* mgr, Priority priority,
 				CCircuitDef* buildDef, const springai::AIFloat3& position,

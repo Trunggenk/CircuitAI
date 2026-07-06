@@ -16,10 +16,10 @@ struct SSkirmishAICallback;
 
 namespace circuit {
 
-class COOAICallback {
+class COOAICallback final {
 public:
 	COOAICallback(springai::OOAICallback* clb);
-	virtual ~COOAICallback();
+	~COOAICallback();
 
 	void Init(const struct SSkirmishAICallback* clb);
 

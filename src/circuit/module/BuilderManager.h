@@ -241,7 +241,7 @@ namespace TaskB {
 	}
 } // namespace TaskB
 
-class CBuilderManager: public ITaskModule {
+class CBuilderManager final: public ITaskModule {
 public:
 	friend class CBuilderScript;
 

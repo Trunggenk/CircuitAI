@@ -16,7 +16,7 @@
 namespace circuit {
 
 template <typename T>
-class CMultiQueue {
+class CMultiQueue final {
 public:
 	typedef std::function<void (T& item)> ProcessFunction;
 	using ConditionFunction = std::function<bool (T& item)>;

@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CNilTask: public IUnitTask {
+class CNilTask final: public IUnitTask {
 public:
 	CNilTask(ITaskModule* mgr);
 	virtual ~CNilTask();

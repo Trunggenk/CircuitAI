@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CPlayerTask: public IUnitTask {
+class CPlayerTask final: public IUnitTask {
 public:
 	CPlayerTask(ITaskModule* mgr);
 	virtual ~CPlayerTask();

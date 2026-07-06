@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBGenericTask: public IBuilderTask {
+class CBGenericTask final: public IBuilderTask {
 public:
 	CBGenericTask(ITaskModule* mgr, BuildType buildType, Priority priority,
 				  CCircuitDef* buildDef, const springai::AIFloat3& position,

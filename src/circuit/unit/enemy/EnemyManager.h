@@ -24,7 +24,7 @@ namespace circuit {
 class CCircuitAI;
 class CQuadField;
 
-class CEnemyManager {
+class CEnemyManager final {
 public:
 	friend class CInitScript;
 
@@ -45,7 +45,7 @@ public:
 	};
 
 	CEnemyManager(CCircuitAI* circuit);
-	virtual ~CEnemyManager();
+	~CEnemyManager();
 
 	void ApplyAuthority(CCircuitAI* authority);
 

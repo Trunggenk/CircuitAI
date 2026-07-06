@@ -20,7 +20,7 @@ class CMetalData;
 class CScheduler;
 template <class T> class CRagMatrix;
 
-class CMetalManager {
+class CMetalManager final {
 public:
 	CMetalManager(CCircuitAI* circuit, CMetalData* metalData);
 	~CMetalManager();

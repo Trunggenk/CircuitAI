@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CSWaitTask: public IWaitTask {
+class CSWaitTask final: public IWaitTask {
 public:
 	CSWaitTask(ITaskModule* mgr, bool stop, int timeout);
 	virtual ~CSWaitTask();

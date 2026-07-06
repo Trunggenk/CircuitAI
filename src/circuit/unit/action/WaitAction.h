@@ -13,7 +13,7 @@
 namespace circuit {
 
 // FIXME: Unused
-class CWaitAction: public IUnitAction {
+class CWaitAction final: public IUnitAction {
 public:
 	CWaitAction(CCircuitUnit* owner);
 	virtual ~CWaitAction();

@@ -12,14 +12,14 @@
 
 namespace circuit {
 
-class CWeaponDef {
+class CWeaponDef final {
 public:
 	using Id = int;
 
 //	CWeaponDef(const CWeaponDef& that) = delete;
 	CWeaponDef& operator=(const CWeaponDef&) = delete;
 	CWeaponDef(springai::WeaponDef* def, springai::Resource* resM, springai::Resource* resE);
-	virtual ~CWeaponDef();
+	~CWeaponDef();
 
 	static Id WeaponIdFromLua(int luaId);
 

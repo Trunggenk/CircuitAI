@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CIdleTask: public IUnitTask {
+class CIdleTask final: public IUnitTask {
 public:
 	CIdleTask(ITaskModule* mgr);
 	virtual ~CIdleTask();

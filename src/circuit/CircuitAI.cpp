@@ -1456,6 +1456,9 @@ CCircuitUnit* CCircuitAI::RegisterTeamUnit(ICoreUnit::Id unitId)
 
 CCircuitUnit* CCircuitAI::RegisterTeamUnit(ICoreUnit::Id unitId, Unit* u)
 {
+	// TODO: ZKUnitFactory, BARUnitFactory, EtcUnitFactory due to differences
+	//       in Unit->ExecuteCustomCommand()
+	//       Factory produces ZKUnit, BARUnit, EtcUnit inherited from CircuitUnit
 	CCircuitDef* cdef = GetCircuitDef(GetCallback()->Unit_GetDefId(unitId));
 	CCircuitUnit* unit = new CCircuitUnit(this, unitId, u, cdef);
 

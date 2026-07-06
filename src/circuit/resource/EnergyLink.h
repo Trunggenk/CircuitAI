@@ -19,7 +19,7 @@ namespace circuit {
 
 #define MIN_COSTMOD	0.01f
 
-class CEnergyLink: public IGridLink {
+class CEnergyLink final: public IGridLink {
 public:
 	struct SPylon: public utils::Markable<SPylon, int> {
 		SPylon() : pos(-RgtVector), range(0.f) {}

@@ -13,7 +13,7 @@
 
 namespace circuit {
 
-class CFGuardTask: public IFighterTask {
+class CFGuardTask final: public IFighterTask {
 public:
 	CFGuardTask(ITaskModule* mgr, CCircuitUnit* vip, float maxPower);
 	virtual ~CFGuardTask();

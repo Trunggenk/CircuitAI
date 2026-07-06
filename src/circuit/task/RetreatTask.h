@@ -15,7 +15,7 @@ namespace circuit {
 
 class CQueryCostMap;
 
-class CRetreatTask: public IUnitTask {
+class CRetreatTask final: public IUnitTask {
 public:
 	CRetreatTask(ITaskModule* mgr, int timeout = ASSIGN_TIMEOUT);
 	virtual ~CRetreatTask();

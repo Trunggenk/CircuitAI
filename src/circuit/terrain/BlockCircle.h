@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBlockCircle: public virtual IBlockMask {
+class CBlockCircle final: public IBlockMask {
 public:
 	// ssize - struct size
 	CBlockCircle(const int2& offset, int radius, const int2& ssize,

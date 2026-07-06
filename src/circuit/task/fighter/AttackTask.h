@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CAttackTask: public ISquadTask {
+class CAttackTask final: public ISquadTask {
 public:
 	CAttackTask(ITaskModule* mgr, float minPower, float powerMod);
 	virtual ~CAttackTask();

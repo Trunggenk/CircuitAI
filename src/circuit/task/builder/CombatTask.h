@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CCombatTask: public IFighterTask {
+class CCombatTask final: public IFighterTask {
 public:
 	CCombatTask(ITaskModule* mgr, float powerMod);
 	virtual ~CCombatTask();

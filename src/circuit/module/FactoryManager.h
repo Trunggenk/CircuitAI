@@ -91,7 +91,7 @@ namespace TaskS {
 	}
 } // namespace TaskS
 
-class CFactoryManager: public ITaskModule {
+class CFactoryManager final: public ITaskModule {
 public:
 	friend class CFactoryScript;
 

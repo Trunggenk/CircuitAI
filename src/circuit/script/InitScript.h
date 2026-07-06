@@ -32,7 +32,7 @@ namespace circuit {
 class CCircuitAI;
 class CCircuitUnit;
 
-class CInitScript: public IScript {
+class CInitScript final: public IScript {
 public:
 	struct SInitInfo {
 		SInitInfo() {}

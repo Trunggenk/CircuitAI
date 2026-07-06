@@ -31,7 +31,7 @@ class CMapManager;
 class CAllyUnit;
 class IMainJob;
 
-class CInfluenceMap {
+class CInfluenceMap final {
 public:
 	CInfluenceMap(CMapManager* manager);
 	~CInfluenceMap();

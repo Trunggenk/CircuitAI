@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CMoveAction: public ITravelAction {
+class CMoveAction final: public ITravelAction {
 public:
 	CMoveAction(CCircuitUnit* owner, int squareSize, float speed = NO_SPEED_LIMIT);
 	CMoveAction(CCircuitUnit* owner, const std::shared_ptr<CPathInfo>& pPath,

@@ -24,7 +24,7 @@ class CAllyTeam;
 class IMainJob;
 class CCircuitUnit;
 
-class CSetupManager {
+class CSetupManager final {
 public:
 	friend class CInitScript;
 
@@ -46,7 +46,7 @@ public:
 	using StartFunc = std::function<void (const springai::AIFloat3& pos)>;
 
 	CSetupManager(CCircuitAI* circuit, CSetupData* setupData);
-	virtual ~CSetupManager();
+	~CSetupManager();
 	void DisabledUnits();
 
 	bool OpenConfig(const std::string& profile, const std::vector<std::string>& parts);

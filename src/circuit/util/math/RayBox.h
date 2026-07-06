@@ -15,7 +15,7 @@
 
 namespace circuit {
 
-class CRay {
+class CRay final {
 public:
 	CRay(const springai::AIFloat3& orig, const springai::AIFloat3& dir)
 		: orig(orig), invdir(springai::AIFloat3(1, 1, 1) / dir)
@@ -25,7 +25,7 @@ public:
 	springai::AIFloat3 invdir;  // 1.f / dir
 };
 
-class CRayFront {
+class CRayFront final {
 public:
 	CRayFront(const springai::AIFloat3& orig, const springai::AIFloat3& dir) : orig(orig) {
 		invdir = springai::AIFloat3(1, 1, 1) / dir;
@@ -39,7 +39,7 @@ public:
 	int sign[3];
 };
 
-class CAABBox {  // Class Axis-Aligned Bounding Box
+class CAABBox final {  // Class Axis-Aligned Bounding Box
 public:
 	CAABBox(const springai::AIFloat3& b0, const springai::AIFloat3& b1) {
 		bounds[0] = b0, bounds[1] = b1;

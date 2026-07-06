@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBlockRectangle: public virtual IBlockMask {
+class CBlockRectangle final: public IBlockMask {
 public:
 	// bsize - block size, ssize - struct size
 	CBlockRectangle(const int2& offset, const int2& bsize, const int2& ssize,

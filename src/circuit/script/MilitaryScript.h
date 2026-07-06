@@ -18,7 +18,7 @@ namespace circuit {
 
 class CMilitaryManager;
 
-class CMilitaryScript: public ITaskModuleScript {
+class CMilitaryScript final: public ITaskModuleScript {
 public:
 	CMilitaryScript(CScriptManager* scr, CMilitaryManager* mgr);
 	virtual ~CMilitaryScript();

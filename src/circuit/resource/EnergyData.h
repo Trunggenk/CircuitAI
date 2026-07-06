@@ -14,7 +14,7 @@
 
 namespace circuit {
 
-class CEnergyData {
+class CEnergyData final {
 public:
 	using Geos = std::vector<springai::AIFloat3>;
 

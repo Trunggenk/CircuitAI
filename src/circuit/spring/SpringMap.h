@@ -16,10 +16,10 @@ struct SSkirmishAICallback;
 
 namespace circuit {
 
-class CMap {
+class CMap final {
 public:
 	CMap(const struct SSkirmishAICallback* clb, springai::Map* m);
-	virtual ~CMap();
+	~CMap();
 
 	void GetHeightMap(FloatVec& outHeightMap) const;
 	void GetSlopeMap(FloatVec& outSlopeMap) const;

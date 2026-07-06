@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CAntiHeavyTask: public ISquadTask {
+class CAntiHeavyTask final: public ISquadTask {
 public:
 	CAntiHeavyTask(ITaskModule* mgr, float powerMod);
 	virtual ~CAntiHeavyTask();

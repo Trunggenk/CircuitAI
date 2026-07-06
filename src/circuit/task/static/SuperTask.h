@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CSuperTask: public IFighterTask {
+class CSuperTask final: public IFighterTask {
 public:
 	CSuperTask(ITaskModule* mgr);
 	virtual ~CSuperTask();

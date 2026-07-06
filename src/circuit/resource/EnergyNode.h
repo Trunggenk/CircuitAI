@@ -15,7 +15,7 @@
 
 namespace circuit {
 
-class CEnergyNode: public IGridLink {
+class CEnergyNode final: public IGridLink {
 public:
 	struct SPylon {
 		SPylon() : pos(-RgtVector), range(0.f) {}

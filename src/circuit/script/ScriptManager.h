@@ -27,13 +27,13 @@ class CCircuitAI;
 class IScript;
 #endif
 
-class CScriptManager {
+class CScriptManager final {
 public:
 	static std::string initName;
 	static std::string mainName;
 
 	CScriptManager(CCircuitAI* circuit);
-	virtual ~CScriptManager();
+	~CScriptManager();
 
 private:
 	void Init();

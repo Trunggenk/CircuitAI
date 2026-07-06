@@ -34,7 +34,7 @@ class IMainJob;
 class CBFactoryTask;
 class CEnergyGrid;
 
-class CEconomyManager: public IModule {
+class CEconomyManager final: public IModule {
 public:
 	friend class CEconomyScript;
 

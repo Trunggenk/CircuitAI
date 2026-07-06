@@ -12,12 +12,12 @@
 
 namespace circuit {
 
-class CLagrangeInterPol {
+class CLagrangeInterPol final {
 public:
 	using Vector = std::vector<float>;
 
 	CLagrangeInterPol(const Vector& X, const Vector& Y);
-	virtual ~CLagrangeInterPol();
+	~CLagrangeInterPol();
 
 	float GetValueAt(float x);
 

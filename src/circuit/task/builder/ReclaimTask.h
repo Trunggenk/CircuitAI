@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBReclaimTask: public IReclaimTask {
+class CBReclaimTask final: public IReclaimTask {
 public:
 	CBReclaimTask(ITaskModule* mgr, Priority priority,
 				  const springai::AIFloat3& position,

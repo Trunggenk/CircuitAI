@@ -16,10 +16,10 @@ namespace circuit {
 
 class CCircuitAI;
 
-class CFactoryData {
+class CFactoryData final {
 public:
 	CFactoryData();
-	virtual ~CFactoryData();
+	~CFactoryData();
 
 	CCircuitDef* GetFactoryToBuild(CCircuitAI* circuit, springai::AIFloat3 position = -RgtVector,
 								   bool isStart = false, bool isReset = false);

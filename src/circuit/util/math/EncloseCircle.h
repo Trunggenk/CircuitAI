@@ -16,7 +16,7 @@
 
 namespace circuit {
 
-class CEncloseCircle {
+class CEncloseCircle final {
 private:
 	struct SPoint {
 		float x, y;
@@ -74,7 +74,7 @@ private:
 
 public:
 	CEncloseCircle();
-	virtual ~CEncloseCircle();
+	~CEncloseCircle();
 
 	void MakeCircle(const std::vector<springai::AIFloat3>& points);
 	const springai::AIFloat3& GetCenter() const { return center; }

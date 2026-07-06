@@ -14,7 +14,7 @@ namespace circuit {
 
 class CEconomyManager;
 
-class CBRepairTask: public IRepairTask {
+class CBRepairTask final: public IRepairTask {
 public:
 	CBRepairTask(ITaskModule* mgr, Priority priority, CAllyUnit* target, int timeout = 0);
 	CBRepairTask(ITaskModule* mgr);  // Load

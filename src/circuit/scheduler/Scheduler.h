@@ -17,10 +17,10 @@
 
 namespace circuit {
 
-class CScheduler {
+class CScheduler final {
 public:
 	CScheduler();
-	virtual ~CScheduler();
+	~CScheduler();
 
 	void Init(const std::shared_ptr<CScheduler>& thisPtr) { self = thisPtr; }
 	void ProcessInit();

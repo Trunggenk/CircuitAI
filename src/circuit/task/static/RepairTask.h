@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CSRepairTask: public IRepairTask {
+class CSRepairTask final: public IRepairTask {
 public:
 	CSRepairTask(ITaskModule* mgr, Priority priority, CAllyUnit* target, int timeout = 0);
 	virtual ~CSRepairTask();

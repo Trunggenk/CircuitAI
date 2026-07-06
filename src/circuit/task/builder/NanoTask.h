@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBNanoTask: public IBuilderTask {
+class CBNanoTask final: public IBuilderTask {
 public:
 	CBNanoTask(ITaskModule* mgr, Priority priority,
 			   CCircuitDef* buildDef, const springai::AIFloat3& position,

@@ -16,7 +16,7 @@ namespace circuit {
 
 class CSetupManager;
 
-class CSetupScript: public IScript {
+class CSetupScript final: public IScript {
 public:
 	CSetupScript(CScriptManager* scr, CSetupManager* mgr);
 	virtual ~CSetupScript();

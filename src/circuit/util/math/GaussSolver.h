@@ -12,13 +12,13 @@
 
 namespace circuit {
 
-class CGaussSolver {
+class CGaussSolver final {
 public:
 	using Vector = std::vector<float>;
 	using Matrix = std::vector<Vector>;
 
 	CGaussSolver();
-	virtual ~CGaussSolver();
+	~CGaussSolver();
 
 	const Vector& Solve(Matrix& A, Vector& B);  // Changes A, B
 	const Vector& GetResult() const;

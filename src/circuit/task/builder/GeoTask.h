@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBGeoTask: public IBuilderTask {
+class CBGeoTask final: public IBuilderTask {
 public:
 	CBGeoTask(ITaskModule* mgr, Priority priority,
 			  CCircuitDef* buildDef, int spotId, const springai::AIFloat3& position,

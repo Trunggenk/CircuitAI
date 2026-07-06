@@ -14,7 +14,7 @@ namespace circuit {
 
 class CCircuitDef;
 
-class CRecruitTask: public IBuilderTask {
+class CRecruitTask final: public IBuilderTask {
 public:
 	enum class RecruitType: char {BUILDPOWER = 0, FIREPOWER};
 

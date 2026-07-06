@@ -16,10 +16,10 @@ class CCircuitAI;
 class CThreatMap;
 class CInfluenceMap;
 
-class CMapManager {
+class CMapManager final {
 public:
 	CMapManager(CCircuitAI* circuit, float decloakRadius);
-	virtual ~CMapManager();
+	~CMapManager();
 
 	void InitMaps();
 

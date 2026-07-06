@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CRaidTask: public ISquadTask {
+class CRaidTask final: public ISquadTask {
 public:
 	CRaidTask(ITaskModule* mgr, float maxPower, float powerMod);
 	virtual ~CRaidTask();

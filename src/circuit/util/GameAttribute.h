@@ -20,12 +20,12 @@ namespace circuit {
 
 class CCircuitAI;
 
-class CGameAttribute {
+class CGameAttribute final {
 public:
 	using Circuits = std::unordered_set<CCircuitAI*>;
 
 	CGameAttribute();
-	virtual ~CGameAttribute();
+	~CGameAttribute();
 
 	void Init(unsigned int seed);
 	bool IsInitialized() const { return isInitialized; }

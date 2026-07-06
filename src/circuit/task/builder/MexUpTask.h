@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBMexUpTask: public IBuilderTask {
+class CBMexUpTask final: public IBuilderTask {
 public:
 	CBMexUpTask(ITaskModule* mgr, Priority priority,
 				CCircuitDef* buildDef, int spotId, const springai::AIFloat3& position,

@@ -23,10 +23,10 @@ namespace circuit {
 
 class CCircuitAI;
 
-class CDebugDrawer {
+class CDebugDrawer final {
 public:
 	CDebugDrawer(CCircuitAI* circuit, const struct SSkirmishAICallback* sAICallback);
-	virtual ~CDebugDrawer();
+	~CDebugDrawer();
 
 	int AddOverlayTexture(const float* texData, int w, int h);
 // ---- Missing springai::Debug functions ---- BEGIN

@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CBSonarTask: public ISensorTask {
+class CBSonarTask final: public ISensorTask {
 public:
 	CBSonarTask(ITaskModule* mgr, Priority priority,
 				CCircuitDef* buildDef, const springai::AIFloat3& position,

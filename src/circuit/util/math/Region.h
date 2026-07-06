@@ -42,7 +42,7 @@ union SBox {
 	}
 };
 
-class CPolygon {
+class CPolygon final {
 public:
 	CPolygon(F3Vec&& points);
 	CPolygon(const SBox& b);
@@ -66,7 +66,7 @@ private:
 	springai::AIFloat3 center;
 };
 
-class CRegion {
+class CRegion final {
 public:
 	CRegion() : area(0.f) {}  // for easy use with std::map
 	CRegion(std::vector<CPolygon>&& polys);

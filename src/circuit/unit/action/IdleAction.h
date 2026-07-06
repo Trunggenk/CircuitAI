@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CIdleAction: public IUnitAction {
+class CIdleAction final: public IUnitAction {
 public:
 	CIdleAction(CCircuitUnit* owner);
 	virtual ~CIdleAction();

@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CSPatrolTask: public IPatrolTask {
+class CSPatrolTask final: public IPatrolTask {
 public:
 	CSPatrolTask(ITaskModule* mgr, Priority priority,
 				 const springai::AIFloat3& position,

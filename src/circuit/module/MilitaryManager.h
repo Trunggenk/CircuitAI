@@ -70,7 +70,7 @@ namespace TaskF {
 	}
 } // namespace TaskF
 
-class CMilitaryManager: public ITaskModule {
+class CMilitaryManager final: public ITaskModule {
 public:
 	friend class CMilitaryScript;
 

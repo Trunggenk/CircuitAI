@@ -21,7 +21,7 @@ namespace circuit {
 class CEconomyManager;
 class CCircuitDef;
 
-class CEconomyScript: public IModuleScript {
+class CEconomyScript final: public IModuleScript {
 public:
 	CEconomyScript(CScriptManager* scr, CEconomyManager* mgr);
 	virtual ~CEconomyScript();

@@ -14,7 +14,7 @@ namespace circuit {
 
 class CBuilderManager;
 
-class CBuilderScript: public ITaskModuleScript {
+class CBuilderScript final: public ITaskModuleScript {
 public:
 	CBuilderScript(CScriptManager* scr, CBuilderManager* mgr);
 	virtual ~CBuilderScript();

@@ -16,7 +16,7 @@ namespace springai {
 
 namespace utils {
 
-class CConvexHull {
+class CConvexHull final {
 public:
 	CConvexHull(const circuit::CMetalData::Metals& spots, const circuit::CMetalData::Clusters& clusters);
 	~CConvexHull();

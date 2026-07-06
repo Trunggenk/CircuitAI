@@ -12,7 +12,7 @@
 
 namespace circuit {
 
-class CDGunAction: public IUnitAction {
+class CDGunAction final: public IUnitAction {
 public:
 	CDGunAction(CCircuitUnit* owner, float range);
 	virtual ~CDGunAction();

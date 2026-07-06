@@ -15,7 +15,7 @@
 
 namespace circuit {
 
-class CMaskHandler {
+class CMaskHandler final {
 public:
 	using Type = int;
 	using Mask = uint64_t;
@@ -31,7 +31,7 @@ public:
 	CMaskHandler(const CMaskHandler&) = delete;
 	CMaskHandler& operator=(const CMaskHandler&) = delete;
 	CMaskHandler();
-	virtual ~CMaskHandler();
+	~CMaskHandler();
 
 	// masks work as bitfields, so
 	// we can not support more than this

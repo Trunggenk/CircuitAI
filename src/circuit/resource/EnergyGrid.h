@@ -24,10 +24,10 @@ namespace circuit {
 
 class CCircuitAI;
 
-class CEnergyGrid {
+class CEnergyGrid final {
 public:
 	CEnergyGrid(CCircuitAI* circuit);
-	virtual ~CEnergyGrid();
+	~CEnergyGrid();
 
 	void ReadConfig();
 private:

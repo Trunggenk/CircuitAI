@@ -15,7 +15,7 @@ namespace circuit {
 class CCircuitAI;
 class CEnergyData;
 
-class CEnergyManager {
+class CEnergyManager final {
 public:
 	CEnergyManager(CCircuitAI* circuit, CEnergyData* energyData);
 	~CEnergyManager();

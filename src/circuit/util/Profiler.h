@@ -23,7 +23,7 @@ namespace circuit {
 class CProfiler;
 extern CProfiler profiler;
 
-class CProfiler {
+class CProfiler final {
 public:
 	CProfiler() {}
 	~CProfiler() {}

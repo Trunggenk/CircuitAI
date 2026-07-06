@@ -82,10 +82,10 @@ public:
 	const char* reason;
 };
 
-class CCircuitAI {
+class CCircuitAI final {
 public:
 	CCircuitAI(springai::OOAICallback* callback);
-	virtual ~CCircuitAI();
+	~CCircuitAI();
 
 // >>> AI Event handler ---- BEGIN
 public:

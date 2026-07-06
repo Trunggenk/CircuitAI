@@ -25,7 +25,7 @@ class CCircuitAI;
 class CAllyTeam;
 class CMap;
 
-class CSetupData {
+class CSetupData final {
 public:
 	using ModOptions = std::unordered_map<std::string, std::string>;
 	using BoxMap = std::map<int, utils::CRegion>;  // <start_box_id, box>
