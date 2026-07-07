@@ -8,6 +8,10 @@ function gadget:GetInfo() return {
 	enabled = true,
 } end
 
+-- Workaround to save authors intention for Spring split
+local SpringShared = Spring
+local SpringUnsynced = Spring
+
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 if (gadgetHandler:IsSyncedCode()) then  -- Synced
