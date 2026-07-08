@@ -8,7 +8,7 @@
 #include "script/MilitaryScript.h"
 #include "script/ScriptManager.h"
 #include "module/MilitaryManager.h"
-#include "util/Utils.h"
+#include "util/ExtAS.h"
 #include "angelscript/include/angelscript.h"
 
 namespace circuit {

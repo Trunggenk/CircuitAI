@@ -34,7 +34,7 @@ namespace circuit {
 using namespace springai;
 using namespace terrain;
 
-CAllyTeam::CAllyTeam(const TeamIds& tids, const utils::CRegion& sb)
+CAllyTeam::CAllyTeam(const TeamIds& tids, const geom::CRegion& sb)
 		: circuit(nullptr)
 		, teamIds(tids)
 		, startBox(sb)

@@ -37,14 +37,6 @@
 
 namespace utils {
 
-#ifdef DEBUG
-	#define PRINT_DEBUG(fmt, ...)	printf("<CircuitAI DEBUG> " fmt, ##__VA_ARGS__)
-	#define ASSERT(x)	assert(x)
-#else
-	#define PRINT_DEBUG(fmt, ...)
-	#define ASSERT(x)	if (!(x)) throw
-#endif
-
 //template<typename Iter, typename RandomGenerator>
 //Iter select_randomly(Iter start, Iter end, RandomGenerator& g) {
 //	std::uniform_int_distribution<> dis(0, std::distance(start, end) - 1);
@@ -81,7 +73,7 @@ static inline std::string string_format(const std::string fmt_str, ...)
 	std::string str;
 	std::unique_ptr<char[]> formatted;
 	va_list ap;
-	while(1) {
+	while (1) {
 		formatted.reset(new char[n]); /* wrap the plain char array into the unique_ptr */
 		strcpy(&formatted[0], fmt_str.c_str());
 		va_start(ap, fmt_str);

@@ -8,7 +8,7 @@
 #include "script/BuilderScript.h"
 #include "script/ScriptManager.h"
 #include "module/BuilderManager.h"
-#include "util/Utils.h"
+#include "util/ExtAS.h"
 #include "angelscript/include/angelscript.h"
 
 namespace circuit {

@@ -252,7 +252,7 @@ void CMetalManager::FindWithinRangeSpots(const AIFloat3& posFrom, const AIFloat3
 	CMetalData::IndicesDists indices;
 	FindSpotsInRadius(pos, radius, indices);
 	const CMetalData::Metals& spots = GetSpots();
-	const utils::SBox box(posFrom.x, posTo.x, posFrom.z, posTo.z);
+	const geom::SBox box(posFrom.x, posTo.x, posFrom.z, posTo.z);
 	for (auto& kv : indices) {
 		if (box.ContainsPoint(spots[kv.first].position)) {
 			outIndices.push_back(kv);

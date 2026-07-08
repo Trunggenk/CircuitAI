@@ -19,6 +19,7 @@
 #include "CircuitAI.h"
 #include "util/GameAttribute.h"
 #include "util/MaskHandler.h"
+#include "util/ExtAS.h"
 #include "util/Utils.h"
 
 #include "angelscript/include/angelscript.h"
@@ -85,7 +86,7 @@ static void ConstructVec3(float3* mem)
 	new(mem) float3();
 }
 
-static void ConstructCopyVec3(AIFloat3* mem, const AIFloat3& o)
+static void ConstructCopyVec3(float3* mem, const float3& o)
 {
 	new(mem) float3(o);
 }
@@ -103,6 +104,21 @@ static void ConstructVec3Val3(float3* mem, float x, float y, float z)
 static std::string ConvertVec3ToStr(const float3& f)
 {
 	return f.str();  // static_cast<const AIFloat3&>(f).ToString();
+}
+
+//static bool IsInRange(const AIFloat3& posA, const AIFloat3& posB, float range)
+//{
+//	return geom::is_in_range(posA, posB, range);
+//}
+
+static geom::CPolygon* FactoryCPolygon(const CScriptArray* array)
+{
+	F3Vec points;
+	points.reserve(array->GetSize());
+	for (asUINT i = 0; i < array->GetSize(); ++i) {
+		points.push_back(*static_cast<const AIFloat3*>(array->At(i)));
+	}
+	return new geom::CPolygon(std::move(points));
 }
 
 static void ConstructSArmorInfo(CCircuitDef::SArmorInfo* mem)
@@ -527,6 +543,17 @@ void CInitScript::RegisterCore()
 	r = engine->RegisterGlobalFunction("AIFloat3 AiFabs(const AIFloat3)", asFUNCTION(float3::fabs), asCALL_CDECL); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("AIFloat3 AiSign(const AIFloat3)", asFUNCTION(float3::sign), asCALL_CDECL); ASSERT(r >= 0);
 
+	r = engine->RegisterObjectMethod("AIFloat3", "bool IsInRange(const AIFloat3& in, float) const", asFUNCTION(geom::is_in_range), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+
+	// RegisterGeometry
+	geom::CPolygon::RegisterRefCounted(engine, "CPolygon");
+	r = engine->RegisterObjectBehaviour("CPolygon", asBEHAVE_FACTORY, "CPolygon@ f(const array<AIFloat3>@+)", asFUNCTION(FactoryCPolygon), asCALL_CDECL); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("CPolygon", "const float area", asOFFSET(geom::CPolygon, area)); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CPolygon", "bool ContainsPoint(const AIFloat3& in) const", asMETHOD(geom::CPolygon, ContainsPoint), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CPolygon", "AIFloat3 Random() const", asMETHOD(geom::CPolygon, Random), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CPolygon", "void Scale(float)", asMETHOD(geom::CPolygon, Scale), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CPolygon", "void Extend(float)", asMETHOD(geom::CPolygon, Extend), asCALL_THISCALL); ASSERT(r >= 0);
+
 	// RegisterUtils
 //	asbind20::global(engine)
 //		.function("void AiLog(const string& in)", &CInitScript::Log, asbind20::auxiliary(this));
@@ -805,12 +832,8 @@ void CInitScript::UnitDestroyed(CCircuitUnit* unit)
 template <class T>
 void CInitScript::RegisterIUnitTask(asIScriptEngine* engine, const char* cls)
 {
+	T::RegisterRefCounted(engine, cls);
 	int r;
-	r = engine->RegisterObjectType(cls, 0, asOBJ_REF); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour(cls, asBEHAVE_ADDREF, "void f()", asMETHODPR(IRefCounter, AddRef, (), int), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectBehaviour(cls, asBEHAVE_RELEASE, "void f()", asMETHODPR(IRefCounter, Release, (), int), asCALL_THISCALL); ASSERT(r >= 0);
-//	r = engine->RegisterObjectMethod(cls, "int GetRefCount() const", asMETHODPR(IRefCounter, GetRefCount, () const, int), asCALL_THISCALL); ASSERT(r >= 0);
-
 	r = engine->RegisterObjectMethod(cls, "Type GetType() const", asMETHODPR(T, GetType, () const, IUnitTask::Type), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod(cls, "array<CCircuitUnit@>@ GetUnits() const", asFUNCTION(IUnitTask_GetUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod(cls, "void Abort()", asMETHOD(T, Abort), asCALL_THISCALL); ASSERT(r >= 0);

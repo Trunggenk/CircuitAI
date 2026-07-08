@@ -28,7 +28,7 @@ class CMap;
 class CSetupData final {
 public:
 	using ModOptions = std::unordered_map<std::string, std::string>;
-	using BoxMap = std::map<int, utils::CRegion>;  // <start_box_id, box>
+	using BoxMap = std::map<int, geom::CRegion>;  // <start_box_id, box>
 	using AllyMap = std::vector<CAllyTeam*>;
 
 	CSetupData();
@@ -39,7 +39,7 @@ public:
 	bool CanChooseStartPos() const { return false/*startPosType == CGameSetup::StartPos_ChooseInGame*/; }
 
 	CAllyTeam* GetAllyTeam(int allyTeamId) { return allyTeams[allyTeamId]; }
-	const utils::CRegion& GetStartBox(int boxId) { return boxes[boxId]; }
+	const geom::CRegion& GetStartBox(int boxId) { return boxes[boxId]; }
 
 	const ModOptions& GetModOptions() const { return modoptions; }
 

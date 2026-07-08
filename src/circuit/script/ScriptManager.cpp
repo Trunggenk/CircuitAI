@@ -11,6 +11,7 @@
 #endif
 #include "CircuitAI.h"
 #include "util/FileSystem.h"
+#include "util/ExtAS.h"
 #include "util/Utils.h"
 #include "util/Profiler.h"
 

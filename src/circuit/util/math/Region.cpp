@@ -8,7 +8,7 @@
 #include "util/math/Region.h"
 #include "util/math/poly1tri.h"
 
-namespace utils {
+namespace geom {
 
 using namespace springai;
 
@@ -83,10 +83,10 @@ AIFloat3 CPolygon::Random() const
 	return w + verts[tris[choice * 3 + 0]];
 }
 
-void CPolygon::Scale(float value)
+void CPolygon::Scale(float factor)
 {
 	for (AIFloat3& p : verts) {
-		p = (p - center) * value + center;
+		p = center + (p - center) * factor;
 	}
 	CalcArea();
 }
@@ -94,13 +94,14 @@ void CPolygon::Scale(float value)
 void CPolygon::Extend(float value)
 {
 	for (AIFloat3& p : verts) {
-		p = (p - center) * value + center;
+		p += (p - center).Normalize2D() * value;
 	}
 	CalcArea();
 }
 
 void CPolygon::CalcArea()
 {
+	areas.clear();
 	const int tcount = tris.size() / 3;
 	for (int i = 0; i < tcount; ++i) {
 		areas.push_back(Triangulate::Area(verts[tris[i * 3 + 0]], verts[tris[i * 3 + 1]], verts[tris[i * 3 + 2]]));
@@ -108,22 +109,29 @@ void CPolygon::CalcArea()
 	area = Triangulate::Area(verts);
 }
 
-CRegion::CRegion(std::vector<CPolygon>&& polys)
-		: box(polys[0].GetBox())
+CRegion::CRegion(std::vector<CPolygon*>&& polys)
+		: box(polys[0]->GetBox())
 		, parts(polys)
 		, area(0.f)
 {
-	for (const CPolygon& p : parts) {
-		box.Merge(p.GetBox());
-		area += p.GetArea();
+	for (const CPolygon* p : parts) {
+		box.Merge(p->GetBox());
+		area += p->GetArea();
 	}
 }
 
 CRegion::CRegion(SBox&& b)
 		: box(b)
 {
-	parts.emplace_back(box);
-	area = parts[0].GetArea();
+	parts.push_back(new CPolygon(box));
+	area = parts[0]->GetArea();
+}
+
+CRegion::~CRegion()
+{
+	for (CPolygon* poly : parts) {
+		poly->Release();
+	}
 }
 
 bool CRegion::ContainsPoint(const AIFloat3& point) const
@@ -131,8 +139,8 @@ bool CRegion::ContainsPoint(const AIFloat3& point) const
 	if (!box.ContainsPoint(point)) {
 		return false;
 	}
-	for (const CPolygon& poly : parts) {
-		if (poly.ContainsPoint(point)) {
+	for (const CPolygon* poly : parts) {
+		if (poly->ContainsPoint(point)) {
 			return true;
 		}
 	}
@@ -142,13 +150,13 @@ bool CRegion::ContainsPoint(const AIFloat3& point) const
 AIFloat3 CRegion::Random() const
 {
 	float dice = (float)rand() / RAND_MAX * area;
-	for (const CPolygon& p : parts) {
-		dice -= p.GetArea();
+	for (const CPolygon* p : parts) {
+		dice -= p->GetArea();
 		if (dice < 0.f) {
-			return p.Random();
+			return p->Random();
 		}
 	}
-	return parts.back().Random();
+	return parts.back()->Random();
 }
 
 } // namespace utils

@@ -165,7 +165,7 @@ CSetupData::BoxMap CSetupData::ReadStartBoxes(const std::string& script, CMap* m
 		for (int boxId = 0; boxId < boxCount; ++boxId) {
 			std::string sBoxId = utils::int_to_string(boxId);
 			int numPolygons = game->GetRulesParamFloat((std::string("startbox_n_") + sBoxId).c_str(), -1);
-			std::vector<utils::CPolygon> polys;
+			std::vector<geom::CPolygon*> polys;
 			polys.reserve(numPolygons);
 			for (int i = 1; i <= numPolygons; ++i) {
 				std::string sI = utils::int_to_string(i);
@@ -178,9 +178,9 @@ CSetupData::BoxMap CSetupData::ReadStartBoxes(const std::string& script, CMap* m
 					float z = game->GetRulesParamFloat((std::string("startbox_polygon_z_") + sPolyVert).c_str(), 0.f);
 					verts.push_back(AIFloat3(x, 0.f, z));
 				}
-				polys.emplace_back(std::move(verts));
+				polys.push_back(new geom::CPolygon(std::move(verts)));
 			}
-			boxes[boxId] = utils::CRegion(std::move(polys));
+			boxes[boxId] = geom::CRegion(std::move(polys));
 		}
 
 	} else {
@@ -198,7 +198,7 @@ CSetupData::BoxMap CSetupData::ReadStartBoxes(const std::string& script, CMap* m
 			start = section[0].second;
 			int allyTeamId = utils::string_to_int(section[1]);
 
-			utils::SBox startbox;
+			geom::SBox startbox;
 			std::string::const_iterator bodyStart = start;
 			std::string::const_iterator bodyEnd = utils::EndInBraces(start, end);
 			std::smatch rectm;
@@ -217,7 +217,7 @@ CSetupData::BoxMap CSetupData::ReadStartBoxes(const std::string& script, CMap* m
 			startbox.right  *= width;
 			startbox.top    *= height;
 			startbox.bottom *= height;
-			boxes[allyTeamId] = utils::CRegion(std::move(startbox));
+			boxes[allyTeamId] = geom::CRegion(std::move(startbox));
 
 			start = bodyEnd;
 		}

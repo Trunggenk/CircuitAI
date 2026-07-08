@@ -9,10 +9,15 @@
 #define SRC_CIRCUIT_UTIL_MATH_REGION_H_
 
 #include "util/Defines.h"
+#include "script/RefCounter.h"
 
 #include <vector>
 
-namespace utils {
+namespace circuit {
+	class CInitScript;
+}
+
+namespace geom {
 
 union SBox {
 	SBox(float l, float r, float t, float b) : edge{l, r, t, b} {}
@@ -42,17 +47,19 @@ union SBox {
 	}
 };
 
-class CPolygon final {
+class CPolygon final: public circuit::IRefCounter<CPolygon> {
 public:
+	friend class circuit::CInitScript;
+
 	CPolygon(F3Vec&& points);
 	CPolygon(const SBox& b);
-	~CPolygon() {}
+	virtual ~CPolygon() {}
 
 	const SBox& GetBox() const { return box; }  // bounding box
 	float GetArea() const { return area; }
 	bool ContainsPoint(const springai::AIFloat3& point) const;
 	springai::AIFloat3 Random() const;
-	void Scale(float value);
+	void Scale(float factor);
 	void Extend(float value);
 
 private:
@@ -69,9 +76,9 @@ private:
 class CRegion final {
 public:
 	CRegion() : area(0.f) {}  // for easy use with std::map
-	CRegion(std::vector<CPolygon>&& polys);
+	CRegion(std::vector<CPolygon*>&& polys);
 	CRegion(SBox&& b);
-	~CRegion() {}
+	~CRegion();
 
 	const SBox& GetBox() const { return box; }  // bounding box
 	bool ContainsPoint(const springai::AIFloat3& point) const;
@@ -79,7 +86,7 @@ public:
 
 private:
 	SBox box;
-	std::vector<CPolygon> parts;
+	std::vector<CPolygon*> parts;
 	float area;
 };
 

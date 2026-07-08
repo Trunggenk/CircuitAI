@@ -136,7 +136,7 @@ bool CSetupManager::CanChooseStartPos() const
 void CSetupManager::PickStartPos(StartPosType type)
 {
 	CAllyTeam* allyTeam = circuit->GetAllyTeam();
-	const utils::CRegion& box = allyTeam->GetStartBox();
+	const geom::CRegion& box = allyTeam->GetStartBox();
 	AIFloat3 pos;
 
 	switch (type) {
