@@ -206,6 +206,7 @@ public:
 	float GetLenOffset() const { return lenOffset; }
 
 	// Script-hooks
+	const SFactoryDef* GetFactoryDef(CCircuitDef* facDef) const;
 	const std::vector<float>* GetTierWeights(CCircuitDef* facDef, int surfType, int tier) const;
 
 private:

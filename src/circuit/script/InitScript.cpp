@@ -393,6 +393,9 @@ void CInitScript::RegisterCore()
 {
 	asIScriptEngine* engine = script->GetEngine();
 
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
+	cache->floatArray = engine->GetTypeInfoByDecl("array<float>");
+
 	// RegisterSpringai
 	static_assert(std::is_base_of<float3, AIFloat3>::value, "AIFloat3 must be a subclass of float3!");
 	static_assert(sizeof(AIFloat3) == sizeof(float3), "Memory layout of AIFloat3 must be same as float3");
@@ -599,6 +602,7 @@ void CInitScript::RegisterCore()
 
 	// RegisterCircuitAI
 	r = engine->RegisterTypedef("Id", "int"); ASSERT(r >= 0);
+	cache->idArray = engine->GetTypeInfoByDecl("array<Id>");
 
 	r = engine->RegisterObjectType("TypeMask", sizeof(CMaskHandler::TypeMask), asOBJ_VALUE | asOBJ_POD | asGetTypeTraits<CMaskHandler::TypeMask>()); ASSERT(r >= 0);
 	r = engine->RegisterTypedef("Type", "int"); ASSERT(r >= 0);
@@ -617,6 +621,7 @@ void CInitScript::RegisterCore()
 
 	r = engine->RegisterObjectType("CCircuitDef", 0, asOBJ_REF | asOBJ_NOCOUNT); ASSERT(r >= 0);
 	r = engine->RegisterObjectType("CCircuitUnit", 0, asOBJ_REF | asOBJ_NOCOUNT); ASSERT(r >= 0);
+	cache->unitArray = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
 	RegisterUnitTasks(engine);
 
 	r = engine->RegisterObjectProperty("CCircuitAI", "const int frame", asOFFSET(CCircuitAI, lastFrame)); ASSERT(r >= 0);
@@ -634,8 +639,6 @@ void CInitScript::RegisterCore()
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetLeadTeamId() const", asFUNCTION(CCircuitAI_GetLeadTeamId), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "Type GetSideId() const", asMETHOD(CCircuitAI, GetSideId), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "const string& GetSideName() const", asMETHOD(CCircuitAI, GetSideName), asCALL_THISCALL); ASSERT(r >= 0);
-	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
-	cache->idArray = engine->GetTypeInfoByDecl("array<Id>");
 	r = engine->RegisterObjectMethod("CCircuitAI", "array<Id>@ GetTeamIds() const", asFUNCTION(CCircuitAI_GetTeamIds), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "void GiveUnits(const array<CCircuitUnit@>@+, int)", asFUNCTION(CCircuitAI_GiveUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "bool UnitControl(CCircuitUnit@, bool)", asMETHODPR(CCircuitAI, UnitControl, (CCircuitUnit*, bool), bool), asCALL_THISCALL); ASSERT(r >= 0);
@@ -860,8 +863,6 @@ void CInitScript::RegisterCSuperTask(asIScriptEngine* engine)
 
 void CInitScript::RegisterUnitTasks(asIScriptEngine* engine)
 {
-	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
-	cache->unitArray = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
 	RegisterIUnitTask<IUnitTask>(engine, "IUnitTask");
 	RegisterIBuilderTask<IBuilderTask>(engine, "IBuilderTask");
 	RegisterIFighterTask<IFighterTask>(engine, "IFighterTask");

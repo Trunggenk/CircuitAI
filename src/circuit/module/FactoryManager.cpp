@@ -1176,34 +1176,42 @@ CCircuitDef* CFactoryManager::GetLargestDef(const CCircuitDef* facDef) const
 	return largestDef;
 }
 
-const std::vector<float>* CFactoryManager::GetTierWeights(CCircuitDef* facDef, int surfType, int tier) const
+const CFactoryManager::SFactoryDef* CFactoryManager::GetFactoryDef(CCircuitDef* facDef) const
 {
 	auto itF = factoryDefs.find(facDef->GetId());
 	if (itF == factoryDefs.end()) {
 		return nullptr;
 	}
+	return &itF->second;
+}
 
-	const SFactoryDef& sfac = itF->second;
+const std::vector<float>* CFactoryManager::GetTierWeights(CCircuitDef* facDef, int surfType, int tier) const
+{
+	const SFactoryDef* sfac = GetFactoryDef(facDef);
+	if (sfac == nullptr) {
+		return nullptr;
+	}
+
 	const SFactoryDef::Tiers* tiers;
 	switch (surfType) {
 		case SFactoryDef::ESurfType::AIR: {
-			tiers = &sfac.airTiers;
+			tiers = &sfac->airTiers;
 		} break;
 		case SFactoryDef::ESurfType::LAND: {
-			tiers = &sfac.landTiers;
+			tiers = &sfac->landTiers;
 		} break;
 		case SFactoryDef::ESurfType::WATER: {
-			tiers = &sfac.waterTiers;
+			tiers = &sfac->waterTiers;
 		} break;
 		default:
 			return nullptr;
 	}
 
-	auto itT = tiers->find(tier);
-	if (itT == tiers->end()) {
+	auto it = tiers->find(tier);
+	if (it == tiers->end()) {
 		return nullptr;
 	}
-	return &itT->second;
+	return &it->second;
 }
 
 CCircuitDef* CFactoryManager::DefaultGetFactoryToBuild(const AIFloat3& position, bool isStart, bool isReset)

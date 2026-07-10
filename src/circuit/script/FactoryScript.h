@@ -36,6 +36,8 @@ public:
 private:
 	void SetTierWeights(CCircuitDef* facDef, int surfType, int tier, const CScriptArray* array);
 	CScriptArray* GetTierWeights(CCircuitDef* facDef, int surfType, int tier);
+	void SetImportance(CCircuitDef* facDef, const CScriptArray* array);
+	CScriptArray* GetImportance(CCircuitDef* facDef);
 
 	struct SScriptInfo {
 		asIScriptFunction* isSwitchTime = nullptr;
