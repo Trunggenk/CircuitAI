@@ -17,6 +17,16 @@ CSetupScript::CSetupScript(CScriptManager* scr, CSetupManager* mgr)
 		: IScript(scr)
 		, manager(mgr)
 {
+	asIScriptEngine* engine = script->GetEngine();
+
+	int r = engine->RegisterObjectType("CSetupManager", 0, asOBJ_REF | asOBJ_NOHANDLE); ASSERT(r >= 0);
+	r = engine->RegisterGlobalProperty("CSetupManager aiSetupMgr", manager); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CSetupManager", "void SetWaterHarmful(bool)", asMETHOD(CSetupManager, SetWaterHarmful), asCALL_THISCALL); ASSERT(r >= 0);
+	// AS docs / "Registering object methods" / "Composite members"
+	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
+
+	// NOTE: Methods with references to types registered in CInitScript.RegisterCore()
+	//       are registered in CInitScript.RegisterMgr()
 }
 
 CSetupScript::~CSetupScript()

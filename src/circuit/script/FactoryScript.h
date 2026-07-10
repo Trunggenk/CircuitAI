@@ -10,6 +10,8 @@
 
 #include "script/TaskModuleScript.h"
 
+class CScriptArray;
+
 namespace springai {
 	class AIFloat3;
 }
@@ -32,6 +34,9 @@ public:
 	CCircuitDef* GetFactoryToBuild(const springai::AIFloat3& pos, bool isStart, bool isReset);
 
 private:
+	void SetTierWeights(CCircuitDef* facDef, int surfType, int tier, const CScriptArray* array);
+	CScriptArray* GetTierWeights(CCircuitDef* facDef, int surfType, int tier);
+
 	struct SScriptInfo {
 		asIScriptFunction* isSwitchTime = nullptr;
 		asIScriptFunction* isSwitchAllowed = nullptr;

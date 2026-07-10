@@ -1176,6 +1176,36 @@ CCircuitDef* CFactoryManager::GetLargestDef(const CCircuitDef* facDef) const
 	return largestDef;
 }
 
+const std::vector<float>* CFactoryManager::GetTierWeights(CCircuitDef* facDef, int surfType, int tier) const
+{
+	auto itF = factoryDefs.find(facDef->GetId());
+	if (itF == factoryDefs.end()) {
+		return nullptr;
+	}
+
+	const SFactoryDef& sfac = itF->second;
+	const SFactoryDef::Tiers* tiers;
+	switch (surfType) {
+		case SFactoryDef::ESurfType::AIR: {
+			tiers = &sfac.airTiers;
+		} break;
+		case SFactoryDef::ESurfType::LAND: {
+			tiers = &sfac.landTiers;
+		} break;
+		case SFactoryDef::ESurfType::WATER: {
+			tiers = &sfac.waterTiers;
+		} break;
+		default:
+			return nullptr;
+	}
+
+	auto itT = tiers->find(tier);
+	if (itT == tiers->end()) {
+		return nullptr;
+	}
+	return &itT->second;
+}
+
 CCircuitDef* CFactoryManager::DefaultGetFactoryToBuild(const AIFloat3& position, bool isStart, bool isReset)
 {
 	CCircuitDef* facDef = factoryData->GetFactoryToBuild(circuit, position, isStart, isReset);

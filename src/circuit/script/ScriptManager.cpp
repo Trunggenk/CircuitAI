@@ -116,6 +116,8 @@ void CScriptManager::Init()
 	aatc::RegisterAllContainers(engine);
 
 	engine->SetContextCallbacks(CScriptManager::ProvideContext, CScriptManager::StoreContext, this);
+
+	engine->SetUserData(&typeInfoCache);
 }
 
 void CScriptManager::Release()

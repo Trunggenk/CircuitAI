@@ -72,6 +72,10 @@ enum RangeType {
 	AIR = 0, SURF, WATER
 }
 
+enum SurfType {
+	AIR = 0, LAND, WATER
+}
+
 }  // namespace Unit
 
 namespace RT {  // Role Type

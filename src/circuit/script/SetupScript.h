@@ -23,9 +23,9 @@ public:
 
 	virtual bool Init() override { return true; }
 
+private:
 	CScriptDictionary* GetModOptions();
 
-private:
 	CSetupManager* manager;
 };
 

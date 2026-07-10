@@ -27,6 +27,7 @@ class CCircuitUnit;
 class CSetupManager final {
 public:
 	friend class CInitScript;
+	friend class CSetupScript;
 
 	enum class StartPosType: char {METAL_SPOT = 0, RANDOM = 1};
 	// TODO: class CCommander;

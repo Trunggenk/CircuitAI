@@ -43,9 +43,6 @@ namespace circuit {
 
 using namespace springai;
 
-asITypeInfo* gUnitArrayType;  // cache
-asITypeInfo* gIdArrayType;  // cache
-
 CInitScript::SInitInfo::SInitInfo(const SInitInfo& o)
 {
 	armor = o.armor;
@@ -105,11 +102,6 @@ static std::string ConvertVec3ToStr(const float3& f)
 {
 	return f.str();  // static_cast<const AIFloat3&>(f).ToString();
 }
-
-//static bool IsInRange(const AIFloat3& posA, const AIFloat3& posB, float range)
-//{
-//	return geom::is_in_range(posA, posB, range);
-//}
 
 static geom::CPolygon* FactoryCPolygon(const CScriptArray* array)
 {
@@ -195,8 +187,10 @@ static int CCircuitAI_GetLeadTeamId(CCircuitAI* circuit)
 
 static CScriptArray* CCircuitAI_GetTeamIds(CCircuitAI* circuit)
 {
+	asIScriptEngine* engine = asGetActiveContext()->GetEngine();
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
 	CAllyTeam* allyTeam = circuit->GetAllyTeam();
-	CScriptArray* arr = CScriptArray::Create(gIdArrayType, allyTeam->GetSize());
+	CScriptArray* arr = CScriptArray::Create(cache->idArray, allyTeam->GetSize());
 	asUINT i = 0;
 	for (CAllyTeam::Id teamId : allyTeam->GetTeamIds()) {
 		*(CAllyTeam::Id*)arr->At(i++) = teamId;
@@ -261,10 +255,9 @@ static std::string CCircuitUnit_GetRulesParamString(CCircuitUnit* unit, const st
 
 static CScriptArray* IUnitTask_GetUnits(IUnitTask* task)
 {
-	// Without caching arrayType can be extracted by:
-//	asIScriptEngine* engine = asGetActiveContext()->GetEngine(); // Get engine from active context
-//	asITypeInfo* arrayType = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
-	CScriptArray* arr = CScriptArray::Create(gUnitArrayType, task->GetAssignees().size());
+	asIScriptEngine* engine = asGetActiveContext()->GetEngine();
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
+	CScriptArray* arr = CScriptArray::Create(cache->unitArray, task->GetAssignees().size());
 	asUINT i = 0;
 	for (CCircuitUnit* unit : task->GetAssignees()) {
 		arr->SetValue(i++, &unit);
@@ -403,7 +396,7 @@ void CInitScript::RegisterCore()
 	// RegisterSpringai
 	static_assert(std::is_base_of<float3, AIFloat3>::value, "AIFloat3 must be a subclass of float3!");
 	static_assert(sizeof(AIFloat3) == sizeof(float3), "Memory layout of AIFloat3 must be same as float3");
-	// FIXME: MinGW didn't like asbind20
+	// FIXME: MinGW didn't like asbind20; 1st value_class<float3> => value_class<AIFloat3>?
 //	asbind20::value_class<float3>(
 //		engine,
 //		"AIFloat3",
@@ -469,6 +462,7 @@ void CInitScript::RegisterCore()
 //		.method("string opImplConv() const", [](const float3& f) {
 //			return f.str();  // static_cast<const AIFloat3&>(f).ToString();
 //		});
+//
 //	// NOTE: ".use(asbind20::param<float> * asbind20::const_this)" makes IDE go "Syntax error" (but compiles)
 //	int r = engine->RegisterObjectMethod("AIFloat3", "AIFloat3 opMul_r(float) const", asFUNCTIONPR(operator*, (float, const float3&), float3), asCALL_CDECL_OBJLAST); ASSERT(r >= 0);
 //	asbind20::global(engine)
@@ -476,6 +470,7 @@ void CInitScript::RegisterCore()
 //		.function("AIFloat3 AiMax(const AIFloat3, const AIFloat3)", &float3::max)
 //		.function("AIFloat3 AiFabs(const AIFloat3)", &float3::fabs)
 //		.function("AIFloat3 AiSign(const AIFloat3)", &float3::sign);
+
 	// WARNING: asGetTypeTraits<float3>() has no asOBJ_APP_CLASS_COPY_CONSTRUCTOR flag, unlike AIFloat3
 	//     and fails with this==nullptr if method/function returns AIFloat3
 	int r = engine->RegisterObjectType("AIFloat3", sizeof(AIFloat3),
@@ -562,6 +557,7 @@ void CInitScript::RegisterCore()
 	r = engine->RegisterGlobalFunction("void AiDelPoint(const AIFloat3& in)", asMETHOD(CInitScript, DelPoint), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("void AiPause(bool, const string& in)", asMETHOD(CInitScript, Pause), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("int AiDice(const array<float>@+)", asMETHOD(CInitScript, Dice), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
+	r = engine->RegisterGlobalFunction("int AiNearestPointIdx(const AIFloat3& in, const array<AIFloat3>@+)", asMETHOD(CInitScript, NearestPointIdx), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("int AiMin(int, int)", asMETHODPR(CInitScript, Min<int>, (int, int) const, int), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("float AiMin(float, float)", asMETHODPR(CInitScript, Min<float>, (float, float) const, float), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("int AiMax(int, int)", asMETHODPR(CInitScript, Max<int>, (int, int) const, int), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
@@ -638,7 +634,8 @@ void CInitScript::RegisterCore()
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetLeadTeamId() const", asFUNCTION(CCircuitAI_GetLeadTeamId), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "Type GetSideId() const", asMETHOD(CCircuitAI, GetSideId), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "const string& GetSideName() const", asMETHOD(CCircuitAI, GetSideName), asCALL_THISCALL); ASSERT(r >= 0);
-	gIdArrayType = engine->GetTypeInfoByDecl("array<Id>");
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
+	cache->idArray = engine->GetTypeInfoByDecl("array<Id>");
 	r = engine->RegisterObjectMethod("CCircuitAI", "array<Id>@ GetTeamIds() const", asFUNCTION(CCircuitAI_GetTeamIds), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "void GiveUnits(const array<CCircuitUnit@>@+, int)", asFUNCTION(CCircuitAI_GiveUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "bool UnitControl(CCircuitUnit@, bool)", asMETHODPR(CCircuitAI, UnitControl, (CCircuitUnit*, bool), bool), asCALL_THISCALL); ASSERT(r >= 0);
@@ -721,13 +718,6 @@ void CInitScript::RegisterCore()
 	// RulesParams accessor on Unit
 	r = engine->RegisterObjectMethod("CCircuitUnit", "float GetRulesParam(const string& in, float) const", asFUNCTION(CCircuitUnit_GetRulesParamFloat), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitUnit", "string GetRulesParam(const string& in, const string& in) const", asFUNCTION(CCircuitUnit_GetRulesParamString), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
-
-	CSetupManager* setupMgr = circuit->GetSetupManager();
-	r = engine->RegisterObjectType("CSetupManager", 0, asOBJ_REF | asOBJ_NOHANDLE); ASSERT(r >= 0);
-	r = engine->RegisterGlobalProperty("CSetupManager aiSetupMgr", setupMgr); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("CSetupManager", "void SetWaterHarmful(bool)", asMETHOD(CSetupManager, SetWaterHarmful), asCALL_THISCALL); ASSERT(r >= 0);
-	// AS docs / "Registering object methods" / "Composite members"
-	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
 }
 
 void CInitScript::RegisterMgr()
@@ -870,7 +860,8 @@ void CInitScript::RegisterCSuperTask(asIScriptEngine* engine)
 
 void CInitScript::RegisterUnitTasks(asIScriptEngine* engine)
 {
-	gUnitArrayType = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
+	cache->unitArray = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
 	RegisterIUnitTask<IUnitTask>(engine, "IUnitTask");
 	RegisterIBuilderTask<IBuilderTask>(engine, "IBuilderTask");
 	RegisterIFighterTask<IFighterTask>(engine, "IFighterTask");
@@ -922,6 +913,20 @@ int CInitScript::Dice(const CScriptArray* array) const
 		}
 	}
 	return -1;
+}
+
+int CInitScript::NearestPointIdx(const AIFloat3& pos, const CScriptArray* array)
+{
+	float bestSqDist = std::numeric_limits<float>::max();
+	int bestIdx = -1;
+	for (asUINT i = 0; i < array->GetSize(); ++i) {
+		float d = pos.SqDistance2D(*static_cast<const AIFloat3*>(array->At(i)));
+		if (d < bestSqDist) {
+			bestSqDist = d;
+			bestIdx = i;
+		}
+	}
+	return bestIdx;
 }
 
 void CInitScript::SendMessage(const std::string& msg, int toTeamId)

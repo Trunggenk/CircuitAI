@@ -17,6 +17,7 @@ class asIScriptEngine;
 class asIScriptModule;
 class asIScriptFunction;
 class asIScriptContext;
+class asITypeInfo;
 class asSMessageInfo;
 class asIJITCompiler;
 
@@ -31,6 +32,11 @@ class CScriptManager final {
 public:
 	static std::string initName;
 	static std::string mainName;
+	struct STypeInfoCache {
+		asITypeInfo* unitArray;
+		asITypeInfo* idArray;
+		asITypeInfo* floatArray;
+	} typeInfoCache;
 
 	CScriptManager(CCircuitAI* circuit);
 	~CScriptManager();

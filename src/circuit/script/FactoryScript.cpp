@@ -9,7 +9,9 @@
 #include "script/ScriptManager.h"
 #include "module/FactoryManager.h"
 #include "util/ExtAS.h"
+
 #include "angelscript/include/angelscript.h"
+#include "angelscript/add_on/scriptarray/scriptarray.h"
 
 namespace circuit {
 
@@ -50,6 +52,14 @@ CFactoryScript::CFactoryScript(CScriptManager* scr, CFactoryManager* mgr)
 	r = engine->RegisterObjectMethod("CFactoryManager", "CCircuitDef@ GetRoleDef(const CCircuitDef@, Type)", asMETHOD(CFactoryManager, GetRoleDef), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CFactoryManager", "int GetFactoryCount()", asMETHOD(CFactoryManager, GetFactoryCount), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CFactoryManager", "bool isAssistRequired", asOFFSET(CFactoryManager, isAssistRequired)); ASSERT(r >= 0);
+
+	// TODO: This is not a proper place to create array<float> type cache
+	//       Pre-create all asITypeInfo caches at single place?
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
+	cache->floatArray = engine->GetTypeInfoByDecl("array<float>");
+	// AS docs / "Registering object methods" / "Composite members"
+	r = engine->RegisterObjectMethod("CFactoryManager", "void SetTierWeights(const CCircuitDef@, int, int, array<float>@+)", asMETHOD(CFactoryScript, SetTierWeights), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CFactoryManager", "array<float>@ GetTierWeights(const CCircuitDef@, int, int)", asMETHOD(CFactoryScript, GetTierWeights), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
 }
 
 CFactoryScript::~CFactoryScript()
@@ -103,6 +113,39 @@ CCircuitDef* CFactoryScript::GetFactoryToBuild(const AIFloat3& pos, bool isStart
 	CCircuitDef* result = script->Exec(ctx) ? (CCircuitDef*)ctx->GetReturnObject() : nullptr;
 	script->ReturnContext(ctx);
 	return result;
+}
+
+void CFactoryScript::SetTierWeights(CCircuitDef* facDef, int surfType, int tier, const CScriptArray* array)
+{
+	CFactoryManager* factoryMgr = static_cast<CFactoryManager*>(manager);
+	auto weights = const_cast<std::vector<float>*>(factoryMgr->GetTierWeights(facDef, surfType, tier));
+
+	if (weights->size() != array->GetSize()) {
+		return;
+	}
+	for (asUINT i = 0; i < array->GetSize(); ++i) {
+		(*weights)[i] = *static_cast<const float*>(array->At(i));
+	}
+}
+
+CScriptArray* CFactoryScript::GetTierWeights(CCircuitDef* facDef, int surfType, int tier)
+{
+	asIScriptEngine* engine = asGetActiveContext()->GetEngine();
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
+
+	CFactoryManager* factoryMgr = static_cast<CFactoryManager*>(manager);
+	const std::vector<float>* weights = factoryMgr->GetTierWeights(facDef, surfType, tier);
+
+	if (weights == nullptr) {
+		return CScriptArray::Create(cache->floatArray, (asUINT)0);
+	}
+
+	CScriptArray* arr = CScriptArray::Create(cache->floatArray, weights->size());
+	asUINT i = 0;
+	for (float weight : *weights) {
+		arr->SetValue(i++, &weight);
+	}
+	return arr;
 }
 
 } // namespace circuit

@@ -100,6 +100,7 @@ public:
 	};
 	struct SFactoryDef {
 		using Tiers = std::map<unsigned, std::vector<float>>;  // tier: probs
+		enum ESurfType {AIR = 0, LAND = 1, WATER = 2, _SIZE_};
 
 		SFactoryDef()
 			: startImp(0.f)
@@ -203,6 +204,9 @@ public:
 	float GetAirMapPerc() const { return airMapPerc; }
 	float GetMinOffset() const { return minOffset; }
 	float GetLenOffset() const { return lenOffset; }
+
+	// Script-hooks
+	const std::vector<float>* GetTierWeights(CCircuitDef* facDef, int surfType, int tier) const;
 
 private:
 	CCircuitDef* DefaultGetFactoryToBuild(const springai::AIFloat3& position, bool isStart, bool isReset);
