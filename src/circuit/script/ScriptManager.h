@@ -36,6 +36,7 @@ public:
 		asITypeInfo* unitArray;
 		asITypeInfo* idArray;
 		asITypeInfo* floatArray;
+		asITypeInfo* vec3Array;
 	} typeInfoCache;
 
 	CScriptManager(CCircuitAI* circuit);

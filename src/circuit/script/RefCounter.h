@@ -39,7 +39,7 @@ public:
 		//       asMETHOD may not detect ptrdiff_t of member function (multiple inheritance)
 		r = engine->RegisterObjectBehaviour(name, asBEHAVE_ADDREF, "void f()", asMETHOD(T, AddRef), asCALL_THISCALL); ASSERT(r >= 0);
 		r = engine->RegisterObjectBehaviour(name, asBEHAVE_RELEASE, "void f()", asMETHOD(T, Release), asCALL_THISCALL); ASSERT(r >= 0);
-//		r = engine->RegisterObjectMethod(name, "int GetRefCount() const", asMETHOD(T, GetRefCount), asCALL_THISCALL); ASSERT(r >= 0);
+		r = engine->RegisterObjectMethod(name, "int GetRefCount() const", asMETHOD(T, GetRefCount), asCALL_THISCALL); ASSERT(r >= 0);
 	}
 
 private:

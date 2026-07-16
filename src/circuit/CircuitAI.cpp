@@ -763,7 +763,6 @@ int CCircuitAI::Release(int reason)
 	defsByName.clear();
 
 	modules.clear();
-	scriptManager = nullptr;
 	militaryManager = nullptr;
 	economyManager = nullptr;
 	factoryManager = nullptr;
@@ -775,6 +774,7 @@ int CCircuitAI::Release(int reason)
 	setupManager = nullptr;
 	enemyManager = nullptr;
 	mapManager = nullptr;
+	scriptManager = nullptr;
 
 	for (CCircuitUnit* unit : actionUnits) {
 		if (unit->IsDead()) {  // instance is not in teamUnits

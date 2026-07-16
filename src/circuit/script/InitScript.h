@@ -81,6 +81,7 @@ private:
 	void Log(const std::string& msg) const;
 	void AddPoint(const springai::AIFloat3& pos, const std::string& msg) const;
 	void DelPoint(const springai::AIFloat3& pos) const;
+	void AddLine(const springai::AIFloat3& posA, const springai::AIFloat3& posB) const;
 	void Pause(bool enable, const std::string& msg) const;
 	int Dice(const CScriptArray* array) const;
 	int NearestPointIdx(const springai::AIFloat3& pos, const CScriptArray* array);

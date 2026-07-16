@@ -16,6 +16,7 @@ namespace circuit {
 CSetupScript::CSetupScript(CScriptManager* scr, CSetupManager* mgr)
 		: IScript(scr)
 		, manager(mgr)
+		, moDict(nullptr)
 {
 	asIScriptEngine* engine = script->GetEngine();
 
@@ -23,7 +24,7 @@ CSetupScript::CSetupScript(CScriptManager* scr, CSetupManager* mgr)
 	r = engine->RegisterGlobalProperty("CSetupManager aiSetupMgr", manager); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CSetupManager", "void SetWaterHarmful(bool)", asMETHOD(CSetupManager, SetWaterHarmful), asCALL_THISCALL); ASSERT(r >= 0);
 	// AS docs / "Registering object methods" / "Composite members"
-	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@+ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
 
 	// NOTE: Methods with references to types registered in CInitScript.RegisterCore()
 	//       are registered in CInitScript.RegisterMgr()
@@ -31,6 +32,15 @@ CSetupScript::CSetupScript(CScriptManager* scr, CSetupManager* mgr)
 
 CSetupScript::~CSetupScript()
 {
+	Release();
+}
+
+void CSetupScript::Release()
+{
+	if (moDict != nullptr) {
+		moDict->Release();
+		moDict = nullptr;
+	}
 }
 
 CScriptDictionary* CSetupScript::GetModOptions()
@@ -40,15 +50,19 @@ CScriptDictionary* CSetupScript::GetModOptions()
 	 * if (mo.exists("chicken_queendifficulty"))
 	 *     AiLog(string(mo["chicken_queendifficulty"]));
 	 */
-	CScriptDictionary* dict = CScriptDictionary::Create(script->GetEngine());
+	if (moDict != nullptr) {
+		return moDict;
+	}
+	moDict = CScriptDictionary::Create(script->GetEngine());
 	int typeId = script->GetEngine()->GetTypeIdByDecl("string");
 	const CSetupData::ModOptions& modoptions = manager->GetModOptions();
 	for (const auto& kv : modoptions) {
-		dict->Set(kv.first, (void*)&kv.second, typeId);
+		moDict->Set(kv.first, (void*)&kv.second, typeId);
 	}
-	// Not holding reference to dict and no auto-handles, so
+	// Lazy-getter. Starting from ref=1.
+	// Return-auto-handle "@+" adds ref, while
 	// dict->Release() is in script's scope.
-	return dict;
+	return moDict;
 }
 
 } /* namespace circuit */

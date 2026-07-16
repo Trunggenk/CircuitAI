@@ -113,6 +113,18 @@ static geom::CPolygon* FactoryCPolygon(const CScriptArray* array)
 	return new geom::CPolygon(std::move(points));
 }
 
+static CScriptArray* CPolygon_GetVerts(geom::CPolygon* poly)
+{
+	asIScriptEngine* engine = asGetActiveContext()->GetEngine();
+	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
+	CScriptArray* arr = CScriptArray::Create(cache->vec3Array, poly->GetVerts().size());
+	asUINT i = 0;
+	for (const AIFloat3& vert : poly->GetVerts()) {
+		*(AIFloat3*)arr->At(i++) = vert;  // arr->SetValue(i++, (void*)&vert);
+	}
+	return arr;
+}
+
 static void ConstructSArmorInfo(CCircuitDef::SArmorInfo* mem)
 {
 	new(mem) CCircuitDef::SArmorInfo();
@@ -478,6 +490,7 @@ void CInitScript::RegisterCore()
 	//     and fails with this==nullptr if method/function returns AIFloat3
 	int r = engine->RegisterObjectType("AIFloat3", sizeof(AIFloat3),
 			asOBJ_VALUE | asOBJ_POD | asOBJ_APP_CLASS_ALLFLOATS | asOBJ_APP_CLASS_MORE_CONSTRUCTORS | asGetTypeTraits<AIFloat3>()); ASSERT(r >= 0);
+	cache->vec3Array = engine->GetTypeInfoByDecl("array<AIFloat3>");
 	r = engine->RegisterObjectBehaviour("AIFloat3", asBEHAVE_CONSTRUCT, "void f()", asFUNCTION(ConstructVec3), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectBehaviour("AIFloat3", asBEHAVE_CONSTRUCT, "void f(const AIFloat3& in)", asFUNCTION(ConstructCopyVec3), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectBehaviour("AIFloat3", asBEHAVE_CONSTRUCT, "void f(float)", asFUNCTION(ConstructVec3Val1), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
@@ -546,6 +559,7 @@ void CInitScript::RegisterCore()
 	// RegisterGeometry
 	geom::CPolygon::RegisterRefCounted(engine, "CPolygon");
 	r = engine->RegisterObjectBehaviour("CPolygon", asBEHAVE_FACTORY, "CPolygon@ f(const array<AIFloat3>@+)", asFUNCTION(FactoryCPolygon), asCALL_CDECL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CPolygon", "array<AIFloat3>@ GetVerts() const", asFUNCTION(CPolygon_GetVerts), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CPolygon", "const float area", asOFFSET(geom::CPolygon, area)); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CPolygon", "bool ContainsPoint(const AIFloat3& in) const", asMETHOD(geom::CPolygon, ContainsPoint), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CPolygon", "AIFloat3 Random() const", asMETHOD(geom::CPolygon, Random), asCALL_THISCALL); ASSERT(r >= 0);
@@ -558,6 +572,7 @@ void CInitScript::RegisterCore()
 	r = engine->RegisterGlobalFunction("void AiLog(const string& in)", asMETHOD(CInitScript, Log), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("void AiAddPoint(const AIFloat3& in, const string& in)", asMETHOD(CInitScript, AddPoint), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("void AiDelPoint(const AIFloat3& in)", asMETHOD(CInitScript, DelPoint), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
+	r = engine->RegisterGlobalFunction("void AiAddLine(const AIFloat3& in, const AIFloat3& in)", asMETHOD(CInitScript, AddLine), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("void AiPause(bool, const string& in)", asMETHOD(CInitScript, Pause), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("int AiDice(const array<float>@+)", asMETHOD(CInitScript, Dice), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
 	r = engine->RegisterGlobalFunction("int AiNearestPointIdx(const AIFloat3& in, const array<AIFloat3>@+)", asMETHOD(CInitScript, NearestPointIdx), asCALL_THISCALL_ASGLOBAL, this); ASSERT(r >= 0);
@@ -893,6 +908,11 @@ void CInitScript::AddPoint(const AIFloat3& pos, const std::string& msg) const
 void CInitScript::DelPoint(const AIFloat3& pos) const
 {
 	circuit->GetDrawer()->DeletePointsAndLines(pos);
+}
+
+void CInitScript::AddLine(const AIFloat3& posA, const AIFloat3& posB) const
+{
+	circuit->GetDrawer()->AddLine(posA, posB);
 }
 
 void CInitScript::Pause(bool enable, const std::string& msg) const

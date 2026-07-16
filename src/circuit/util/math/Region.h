@@ -55,6 +55,8 @@ public:
 	CPolygon(const SBox& b);
 	virtual ~CPolygon() {}
 
+	const F3Vec& GetVerts() const { return verts; }
+
 	const SBox& GetBox() const { return box; }  // bounding box
 	float GetArea() const { return area; }
 	bool ContainsPoint(const springai::AIFloat3& point) const;

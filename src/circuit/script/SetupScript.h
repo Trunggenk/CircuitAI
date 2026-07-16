@@ -22,11 +22,14 @@ public:
 	virtual ~CSetupScript();
 
 	virtual bool Init() override { return true; }
+	void Release();
 
 private:
 	CScriptDictionary* GetModOptions();
 
 	CSetupManager* manager;
+
+	CScriptDictionary* moDict;
 };
 
 } /* namespace circuit */
