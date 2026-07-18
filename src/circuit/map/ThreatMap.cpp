@@ -147,7 +147,7 @@ void CThreatMap::EnqueueUpdate()
 //	}
 	isUpdating = true;
 
-	FrameMarkStart(profiler.GetThreatUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
+	FrameMarkStart(CProfiler::GetInstance().GetThreatUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	areaData = circuit->GetTerrainManager()->GetAreaData();
@@ -698,7 +698,7 @@ void CThreatMap::Apply()
 	SwapBuffers();
 	isUpdating = false;
 
-	FrameMarkEnd(profiler.GetThreatUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
+	FrameMarkEnd(CProfiler::GetInstance().GetThreatUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
 
 #ifdef DEBUG_VIS
 	UpdateVis();

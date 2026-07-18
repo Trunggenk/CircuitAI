@@ -56,6 +56,8 @@ public:
 	bool Exec(asIScriptContext* ctx);
 
 private:
+	void RegisterTracyProfiler();
+
 	CCircuitAI* circuit;
 	asIScriptEngine* engine;
 	// Our pool of script contexts. This is used to avoid allocating

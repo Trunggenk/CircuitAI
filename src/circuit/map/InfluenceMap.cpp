@@ -91,7 +91,7 @@ void CInfluenceMap::EnqueueUpdate()
 //	}
 	isUpdating = true;
 
-	FrameMarkStart(profiler.GetInflUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
+	FrameMarkStart(CProfiler::GetInstance().GetInflUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
@@ -176,7 +176,7 @@ void CInfluenceMap::Apply()
 	SwapBuffers();
 	isUpdating = false;
 
-	FrameMarkEnd(profiler.GetInflUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
+	FrameMarkEnd(CProfiler::GetInstance().GetInflUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
 
 #ifdef DEBUG_VIS
 	UpdateVis();

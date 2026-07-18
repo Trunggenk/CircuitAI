@@ -36,6 +36,26 @@ using namespace springai;
 std::string CScriptManager::initName("init");
 std::string CScriptManager::mainName("main");
 
+static void TracyZoneBegin([[maybe_unused]] CProfiler* profiler, const std::string& zoneName, uint32_t color = 0) {
+#ifdef CIRCUIT_PROFILING
+	asIScriptContext *ctx = asGetActiveContext();
+//	int column = 0;
+	const char *scriptSection = nullptr;
+	int line = ctx->GetLineNumber(0, nullptr/*&column*/, &scriptSection);
+	asIScriptFunction* func = ctx->GetFunction(0);
+	const char* decl = func->GetDeclaration(true, true, false);
+
+	CProfiler::ZoneBegin(line, scriptSection, decl, zoneName, color);
+#endif
+}
+
+static void TracyZoneEnd([[maybe_unused]] CProfiler* profiler)
+{
+#ifdef CIRCUIT_PROFILING
+	CProfiler::ZoneEnd();
+#endif
+}
+
 CScriptManager::CScriptManager(CCircuitAI* circuit)
 		: circuit(circuit)
 		, engine(nullptr)
@@ -114,6 +134,7 @@ void CScriptManager::Init()
 	RegisterScriptDictionary(engine);
 	RegisterScriptMath(engine);
 	aatc::RegisterAllContainers(engine);
+	RegisterTracyProfiler();
 
 	engine->SetContextCallbacks(CScriptManager::ProvideContext, CScriptManager::StoreContext, this);
 
@@ -250,6 +271,16 @@ bool CScriptManager::Exec(asIScriptContext* ctx)
 		return false;
 	}
 	return true;
+}
+
+void CScriptManager::RegisterTracyProfiler()
+{
+	int r;
+	r = engine->RegisterObjectType("CProfiler", 0, asOBJ_REF | asOBJ_NOHANDLE); ASSERT(r >= 0);
+	r = engine->RegisterGlobalProperty("CProfiler tracy", &CProfiler::GetInstance()); ASSERT(r >= 0);
+
+	r = engine->RegisterObjectMethod("CProfiler", "void ZoneBegin(const string &in, uint32 = 0)", asFUNCTION(TracyZoneBegin), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CProfiler", "void ZoneEnd()", asFUNCTION(TracyZoneEnd), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 }
 
 asIScriptContext* CScriptManager::ProvideContext(asIScriptEngine* engine, void* param)

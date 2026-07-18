@@ -70,7 +70,8 @@ using namespace terrain;
 #ifdef CIRCUIT_PROFILING
 	#define TRACY_TOPIC(txt, topic)	\
 		ZoneScopedN(txt);	\
-		ZoneName(profiler.GetEvent ## topic ## Name(skirmishAIId), profiler.GetEvent ## topic ## Size(skirmishAIId))
+		ZoneName(CProfiler::GetInstance().GetEvent ## topic ## Name(skirmishAIId),	\
+				CProfiler::GetInstance().GetEvent ## topic ## Size(skirmishAIId))
 	#define TRACY_TOPIC_UNIT(txt, topic, unit)	\
 		TRACY_TOPIC(txt, topic);	\
 		ZoneValue(unit)
@@ -239,7 +240,7 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			ret = this->Release(evt->reason);
 		} break;
 		case EVENT_UPDATE: {
-			FrameMarkNamed(profiler.GetEventUpdateName(skirmishAIId));
+			FrameMarkNamed(CProfiler::GetInstance().GetEventUpdateName(skirmishAIId));
 			TRACY_TOPIC("EVENT_UPDATE", Update);
 
 			struct SUpdateEvent* evt = (struct SUpdateEvent*)data;
@@ -494,7 +495,7 @@ int CCircuitAI::HandleResignEvent(int topic, const void* data)
 			return this->Release(evt->reason);
 		} break;
 		case EVENT_UPDATE: {
-			FrameMarkNamed(profiler.GetEventUpdateName(skirmishAIId));
+			FrameMarkNamed(CProfiler::GetInstance().GetEventUpdateName(skirmishAIId));
 			TRACY_TOPIC("EVENT_UPDATE::RESIGN", UpdateResign);
 
 			struct SUpdateEvent* evt = (struct SUpdateEvent*)data;

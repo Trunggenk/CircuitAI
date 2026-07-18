@@ -36,7 +36,7 @@ EXPORT(int) init(int skirmishAIId, const struct SSkirmishAICallback* innerCallba
 	int ret = ERROR_SHIFT + 1;
 
 	try {
-		circuit::profiler.InitNames(skirmishAIId);
+		circuit::CProfiler::GetInstance().InitNames(skirmishAIId);
 
 		springai::OOAICallback* clb = springai::WrappOOAICallback::GetInstance(innerCallback, skirmishAIId);
 		circuit::CCircuitAI* ai = new circuit::CCircuitAI(clb);
@@ -64,7 +64,7 @@ EXPORT(int) release(int skirmishAIId) {
 		delete ai;
 		delete clb;
 
-		circuit::profiler.ReleaseNames(skirmishAIId);
+		circuit::CProfiler::GetInstance().ReleaseNames(skirmishAIId);
 
 		ret = 0;
 	} CATCH_CPP_AI_EXCEPTION(ret);

@@ -33,6 +33,26 @@ public:
 	static void InitNames(int skirmishAIId);
 	static void ReleaseNames(int skirmishAIId);
 
+	// @see rts/lib/tracy/public/tracy/TracyLua.hpp  or
+	//      rts/lib/tracy/public/client/TracyScoped.hpp
+	static inline void ZoneBegin(uint32_t line, const char* source, const char* function, const std::string name, uint32_t color = 0) {
+#ifdef CIRCUIT_PROFILING
+		const auto srcloc = tracy::Profiler::AllocSourceLocation( line, source, function, name.c_str(), name.size(), color );
+
+		TracyQueuePrepare( tracy::QueueType::ZoneBeginAllocSrcLoc );
+		tracy::MemWrite( &item->zoneBegin.time, tracy::Profiler::GetTime() );
+		tracy::MemWrite( &item->zoneBegin.srcloc, srcloc );
+		TracyQueueCommit( zoneBeginThread );
+#endif
+	}
+	static inline void ZoneEnd() {
+#ifdef CIRCUIT_PROFILING
+		TracyQueuePrepare( tracy::QueueType::ZoneEnd );
+		tracy::MemWrite( &item->zoneEnd.time, tracy::Profiler::GetTime() );
+		TracyQueueCommit( zoneEndThread );
+#endif
+	}
+
 	// NOTE: char[] length is wrong as it references a format string
 	#define NAME_ARRAY(txt, fmt)	\
 	public:	\
