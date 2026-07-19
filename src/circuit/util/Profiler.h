@@ -18,6 +18,12 @@
 #include <string>
 #include <array>
 
+namespace tracy {
+#ifdef TRACY_ON_DEMAND
+TRACY_API LuaZoneState& GetLuaZoneState();
+#endif
+}
+
 namespace circuit {
 
 class CProfiler;
@@ -35,8 +41,15 @@ public:
 
 	// @see rts/lib/tracy/public/tracy/TracyLua.hpp  or
 	//      rts/lib/tracy/public/client/TracyScoped.hpp
-	static inline void ZoneBegin(uint32_t line, const char* source, const char* function, const std::string name, uint32_t color = 0) {
+	static inline void TracyZoneBegin(uint32_t line, const char* source, const char* function, const std::string name, uint32_t color = 0) {
 #ifdef CIRCUIT_PROFILING
+	#ifdef TRACY_ON_DEMAND
+		const auto zoneCnt = tracy::GetLuaZoneState().counter++;
+		if( zoneCnt != 0 && !tracy::GetLuaZoneState().active ) return;
+		tracy::GetLuaZoneState().active = tracy::GetProfiler().IsConnected();
+		if( !tracy::GetLuaZoneState().active ) return;
+	#endif
+
 		const auto srcloc = tracy::Profiler::AllocSourceLocation( line, source, function, name.c_str(), name.size(), color );
 
 		TracyQueuePrepare( tracy::QueueType::ZoneBeginAllocSrcLoc );
@@ -45,8 +58,38 @@ public:
 		TracyQueueCommit( zoneBeginThread );
 #endif
 	}
-	static inline void ZoneEnd() {
+	static inline void TracyZoneText(const std::string& text) {
 #ifdef CIRCUIT_PROFILING
+	#ifdef TRACY_ON_DEMAND
+		if( !tracy::GetLuaZoneState().active ) return;
+		if( !tracy::GetProfiler().IsConnected() )
+		{
+			tracy::GetLuaZoneState().active = false;
+			return;
+		}
+	#endif
+
+		auto ptr = (char*)tracy::tracy_malloc( text.size() );
+		memcpy( ptr, text.c_str(), text.size() );
+		TracyQueuePrepare( tracy::QueueType::ZoneText );
+		tracy::MemWrite( &item->zoneTextFat.text, (uint64_t)ptr );
+		tracy::MemWrite( &item->zoneTextFat.size, (uint16_t)text.size() );
+		TracyQueueCommit( zoneTextFatThread );
+#endif
+	}
+	static inline void TracyZoneEnd() {
+#ifdef CIRCUIT_PROFILING
+	#ifdef TRACY_ON_DEMAND
+		assert( tracy::GetLuaZoneState().counter != 0 );
+		tracy::GetLuaZoneState().counter--;
+		if( !tracy::GetLuaZoneState().active ) return;
+		if( !tracy::GetProfiler().IsConnected() )
+		{
+			tracy::GetLuaZoneState().active = false;
+			return;
+		}
+	#endif
+
 		TracyQueuePrepare( tracy::QueueType::ZoneEnd );
 		tracy::MemWrite( &item->zoneEnd.time, tracy::Profiler::GetTime() );
 		TracyQueueCommit( zoneEndThread );

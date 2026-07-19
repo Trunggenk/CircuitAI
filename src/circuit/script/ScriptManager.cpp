@@ -36,7 +36,8 @@ using namespace springai;
 std::string CScriptManager::initName("init");
 std::string CScriptManager::mainName("main");
 
-static void TracyZoneBegin([[maybe_unused]] CProfiler* profiler, const std::string& zoneName, uint32_t color = 0) {
+static void TracyZoneBegin([[maybe_unused]] CProfiler* profiler, const std::string& zoneName, uint32_t color = 0)
+{
 #ifdef CIRCUIT_PROFILING
 	asIScriptContext *ctx = asGetActiveContext();
 //	int column = 0;
@@ -45,14 +46,21 @@ static void TracyZoneBegin([[maybe_unused]] CProfiler* profiler, const std::stri
 	asIScriptFunction* func = ctx->GetFunction(0);
 	const char* decl = func->GetDeclaration(true, true, false);
 
-	CProfiler::ZoneBegin(line, scriptSection, decl, zoneName, color);
+	CProfiler::TracyZoneBegin(line, scriptSection, decl, zoneName, color);
+#endif
+}
+
+static void TracyZoneText([[maybe_unused]] CProfiler* profiler, const std::string& text)
+{
+#ifdef CIRCUIT_PROFILING
+	CProfiler::TracyZoneText(text);
 #endif
 }
 
 static void TracyZoneEnd([[maybe_unused]] CProfiler* profiler)
 {
 #ifdef CIRCUIT_PROFILING
-	CProfiler::ZoneEnd();
+	CProfiler::TracyZoneEnd();
 #endif
 }
 
@@ -246,12 +254,19 @@ void CScriptManager::ReleaseContext(asIScriptContext* ctx)
 bool CScriptManager::Exec(asIScriptContext* ctx)
 {
 #ifdef CIRCUIT_PROFILING
-	ZoneScoped;
-	std::string nameFunc;
+	const char* scriptSection = nullptr;
+	int row = 0, col = 0;
+	std::string declAt, nameFunc;
+	asIScriptFunction* func = ctx->GetFunction();
+	{ int r = func->GetDeclaredAt(&scriptSection, &row, &col); ASSERT(r >= 0); }
+	declAt.reserve(256);
+	declAt.append(scriptSection).append(":").append(std::to_string(row)).append(":").append(std::to_string(col));
 	nameFunc.reserve(256);
-	nameFunc.append("AS ").append(ctx->GetFunction()->GetNamespace()).append("::").append(ctx->GetFunction()->GetName());
+	nameFunc.append("AS ").append(func->GetNamespace()).append("::").append(func->GetName());
+	ZoneScoped;
 	ZoneName(nameFunc.c_str(), nameFunc.size());
-	ZoneValue(ctx->GetFunction()->GetId());
+	ZoneValue(func->GetId());
+	ZoneText(declAt.c_str(), declAt.size());
 #endif
 
 	int r = ctx->Execute();
@@ -280,6 +295,7 @@ void CScriptManager::RegisterTracyProfiler()
 	r = engine->RegisterGlobalProperty("CProfiler tracy", &CProfiler::GetInstance()); ASSERT(r >= 0);
 
 	r = engine->RegisterObjectMethod("CProfiler", "void ZoneBegin(const string &in, uint32 = 0)", asFUNCTION(TracyZoneBegin), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CProfiler", "void ZoneText(const string &in)", asFUNCTION(TracyZoneText), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CProfiler", "void ZoneEnd()", asFUNCTION(TracyZoneEnd), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 }
 
