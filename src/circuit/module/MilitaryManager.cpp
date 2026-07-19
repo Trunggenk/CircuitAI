@@ -347,7 +347,7 @@ void CMilitaryManager::ReadConfig()
 			}
 			float rat = ratio.get(i, 1.0f).asFloat();
 			float imp = importance.get(i, 1.0f).asFloat() * reImpMod;
-			info.vs.push_back(SRoleInfo::SVsInfo(it->second.type, rat, imp));
+			info.vs.emplace_back(it->second.type, rat, imp);
 		}
 	}
 

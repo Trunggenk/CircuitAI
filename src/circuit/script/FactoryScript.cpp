@@ -49,15 +49,17 @@ CFactoryScript::CFactoryScript(CScriptManager* scr, CFactoryManager* mgr)
 	r = engine->RegisterObjectMethod("CFactoryManager", "IUnitTask@+ Enqueue(const SRecruitTask& in)", asMETHODPR(CFactoryManager, Enqueue, (const TaskS::SRecruitTask&), CRecruitTask*), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CFactoryManager", "IUnitTask@+ Enqueue(const SServSTask& in)", asMETHODPR(CFactoryManager, Enqueue, (const TaskS::SServSTask&), IUnitTask*), asCALL_THISCALL); ASSERT(r >= 0);
 //	r = engine->RegisterObjectMethod("CFactoryManager", "IUnitTask@+ EnqueueRetreat()", asMETHOD(CFactoryManager, EnqueueRetreat), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("CFactoryManager", "CCircuitDef@ GetRoleDef(const CCircuitDef@, Type)", asMETHOD(CFactoryManager, GetRoleDef), asCALL_THISCALL); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("CFactoryManager", "int GetFactoryCount()", asMETHOD(CFactoryManager, GetFactoryCount), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CFactoryManager", "CCircuitDef@ GetRoleDef(const CCircuitDef@, Type) const", asMETHOD(CFactoryManager, GetRoleDef), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CFactoryManager", "int GetFactoryCount() const", asMETHOD(CFactoryManager, GetFactoryCount), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CFactoryManager", "bool isAssistRequired", asOFFSET(CFactoryManager, isAssistRequired)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("CFactoryManager", "float buildpowerRatio", asOFFSET(CFactoryManager, bpRatio)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("CFactoryManager", "float responseWeight", asOFFSET(CFactoryManager, reWeight)); ASSERT(r >= 0);
 
 	// AS docs / "Registering object methods" / "Composite members"
 	r = engine->RegisterObjectMethod("CFactoryManager", "void SetTierWeights(const CCircuitDef@, int, int, array<float>@+)", asMETHOD(CFactoryScript, SetTierWeights), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("CFactoryManager", "array<float>@ GetTierWeights(const CCircuitDef@, int, int)", asMETHOD(CFactoryScript, GetTierWeights), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CFactoryManager", "array<float>@ GetTierWeights(const CCircuitDef@, int, int) const", asMETHOD(CFactoryScript, GetTierWeights), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CFactoryManager", "void SetImportance(const CCircuitDef@, array<float>@+)", asMETHOD(CFactoryScript, SetImportance), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
-	r = engine->RegisterObjectMethod("CFactoryManager", "array<float>@ GetImportance(const CCircuitDef@)", asMETHOD(CFactoryScript, GetImportance), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CFactoryManager", "array<float>@ GetImportance(const CCircuitDef@) const", asMETHOD(CFactoryScript, GetImportance), asCALL_THISCALL, 0, asOFFSET(CFactoryManager, script), true); ASSERT(r >= 0);
 }
 
 CFactoryScript::~CFactoryScript()
@@ -126,7 +128,7 @@ void CFactoryScript::SetTierWeights(CCircuitDef* facDef, int surfType, int tier,
 	}
 }
 
-CScriptArray* CFactoryScript::GetTierWeights(CCircuitDef* facDef, int surfType, int tier)
+CScriptArray* CFactoryScript::GetTierWeights(CCircuitDef* facDef, int surfType, int tier) const
 {
 	asIScriptEngine* engine = asGetActiveContext()->GetEngine();
 	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());
@@ -157,7 +159,7 @@ void CFactoryScript::SetImportance(CCircuitDef* facDef, const CScriptArray* arra
 	sfac->switchImp = *static_cast<const float*>(array->At(1));
 }
 
-CScriptArray* CFactoryScript::GetImportance(CCircuitDef* facDef)
+CScriptArray* CFactoryScript::GetImportance(CCircuitDef* facDef) const
 {
 	asIScriptEngine* engine = asGetActiveContext()->GetEngine();
 	auto cache = static_cast<CScriptManager::STypeInfoCache*>(engine->GetUserData());

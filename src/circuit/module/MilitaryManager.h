@@ -222,7 +222,6 @@ private:
 		float factor;
 		std::set<CCircuitUnit*> units;
 		struct SVsInfo {
-			SVsInfo(CCircuitDef::RoleT t, float r, float i) : role(t), ratio(r), importance(i) {}
 			CCircuitDef::RoleT role;
 			float ratio;
 			float importance;
@@ -230,6 +229,8 @@ private:
 		std::vector<SVsInfo> vs;
 	};
 	std::vector<SRoleInfo> roleInfos;
+	// Script hooks
+	const SRoleInfo* GetRoleInfo(CCircuitDef::RoleT type) const { return &roleInfos[type]; }
 
 	std::set<CCircuitUnit*> stockpilers;
 	std::set<CCircuitUnit*> army;

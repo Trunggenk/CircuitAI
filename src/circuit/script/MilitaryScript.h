@@ -9,14 +9,13 @@
 #define SRC_CIRCUIT_SCRIPT_MILITARYSCRIPT_H_
 
 #include "script/TaskModuleScript.h"
+#include "module/MilitaryManager.h"
 
 namespace springai {
 	class AIFloat3;
 }
 
 namespace circuit {
-
-class CMilitaryManager;
 
 class CMilitaryScript final: public ITaskModuleScript {
 public:
@@ -29,6 +28,8 @@ public:
 	void MakeDefence(int cluster, const springai::AIFloat3& pos);
 
 private:
+	static CMilitaryManager::SRoleInfo::SVsInfo* GetVsInfo(CMilitaryManager::SRoleInfo* info, CCircuitDef::RoleT vsType);
+
 	struct SScriptInfo {
 		asIScriptFunction* makeDefence = nullptr;
 	} militaryInfo;
