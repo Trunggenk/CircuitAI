@@ -256,6 +256,12 @@ void CEconomyManager::InitHandlers()
 		const std::map<std::string, std::string>& customParams = cdef.GetDef()->GetCustomParams();
 
 		if (!cdef.IsMobile()) {
+			// FIXME: Either assign score to different types of structure category,
+			//        and assign to single category based on largest score;
+			//        Or have a list of handlers instead of single handler per event.
+			//        Issue: armfus is energy and e-store.
+			bool isCategoryAssigned = false;
+
 			// pylon
 			auto it = customParams.find("pylonrange");
 			if (it != customParams.end()) {
@@ -288,14 +294,6 @@ void CEconomyManager::InitHandlers()
 				IncPurpose(cdef.GetId());  // avoid reclaiming of multi-purpose old converter/energy
 				continue;  // NOTE: won't deal with spot requirement if considered as anything else.
 			}
-			if (((it = customParams.find("energyconv_capacity")) != customParams.end()) && (utils::string_to_float(it->second) > 0.f)
-				&& ((it = customParams.find("energyconv_efficiency")) != customParams.end()) && (utils::string_to_float(it->second) > 0.f))
-			{
-				finishedHandler[cdef.GetId()] = convertFinishedHandler;
-				destroyedHandler[cdef.GetId()] = convertDestroyedHandler;
-				convertDefs.AddDef(&cdef);
-				IncPurpose(cdef.GetId());  // avoid reclaiming of multi-purpose old converter/energy
-			}
 
 			// energy
 			// BA: float netEnergy = unitDef->GetResourceMake(energyRes) - unitDef->GetUpkeep(energyRes);
@@ -315,29 +313,52 @@ void CEconomyManager::InitHandlers()
 					destroyedHandler[cdef.GetId()] = energyDestroyedHandler;
 					energyDefs.AddDef(&cdef);
 				}
+				isCategoryAssigned = true;
+				IncPurpose(cdef.GetId());  // avoid reclaiming of multi-purpose old converter/energy
+			}
+
+			// energy=>metal converter
+			if (((it = customParams.find("energyconv_capacity")) != customParams.end()) && (utils::string_to_float(it->second) > 0.f)
+				&& ((it = customParams.find("energyconv_efficiency")) != customParams.end()) && (utils::string_to_float(it->second) > 0.f))
+			{
+				if (!isCategoryAssigned) {
+					finishedHandler[cdef.GetId()] = convertFinishedHandler;
+					destroyedHandler[cdef.GetId()] = convertDestroyedHandler;
+					convertDefs.AddDef(&cdef);
+					isCategoryAssigned = true;
+				}
 				IncPurpose(cdef.GetId());  // avoid reclaiming of multi-purpose old converter/energy
 			}
 
 			// storage
 			// NOTE: have to manually filter spot units, as mex placement rules are re-defined in game and break in-engine validation
 			if ((cdef.GetDef()->GetStorage(metalRes) >= 1000.f)/* && !cdef.IsMex()*/) {
-				finishedHandler[cdef.GetId()] = storeFinishedHandler;
-				destroyedHandler[cdef.GetId()] = storeDestroyedHandler;
-				storeMDefs.AddDef(&cdef);
+				if (!isCategoryAssigned) {
+					finishedHandler[cdef.GetId()] = storeFinishedHandler;
+					destroyedHandler[cdef.GetId()] = storeDestroyedHandler;
+					storeMDefs.AddDef(&cdef);
+					isCategoryAssigned = true;
+				}
 				IncPurpose(cdef.GetId());  // avoid reclaiming of multi-purpose old converter/energy
 			}
 			if ((cdef.GetDef()->GetStorage(energyRes) > 1000.f) && !cdef.GetDef()->IsNeedGeo()) {
-				finishedHandler[cdef.GetId()] = storeFinishedHandler;
-				destroyedHandler[cdef.GetId()] = storeDestroyedHandler;
-				storeEDefs.AddDef(&cdef);
+				if (!isCategoryAssigned) {
+					finishedHandler[cdef.GetId()] = storeFinishedHandler;
+					destroyedHandler[cdef.GetId()] = storeDestroyedHandler;
+					storeEDefs.AddDef(&cdef);
+					isCategoryAssigned = true;
+				}
 				IncPurpose(cdef.GetId());  // avoid reclaiming of multi-purpose old converter/energy
 			}
 
 			if (customParams.find("isairbase") != customParams.end()) {
-				createdHandler[cdef.GetId()] = airpadCreatedHandler;
-				finishedHandler[cdef.GetId()] = airpadFinishedHandler;
-				destroyedHandler[cdef.GetId()] = airpadDestroyedHandler;
-				airpadDefs.AddDef(&cdef);
+				if (!isCategoryAssigned) {
+					createdHandler[cdef.GetId()] = airpadCreatedHandler;
+					finishedHandler[cdef.GetId()] = airpadFinishedHandler;
+					destroyedHandler[cdef.GetId()] = airpadDestroyedHandler;
+					airpadDefs.AddDef(&cdef);
+					isCategoryAssigned = true;
+				}
 				IncPurpose(cdef.GetId());  // avoid reclaiming of multi-purpose old converter/energy
 			}
 
@@ -1349,7 +1370,11 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	// 4) at production base
 	CSetupManager* setupMgr = circuit->GetSetupManager();
 	AIFloat3 buildPos = -RgtVector;
-	if (!bestDef->IsAttrBase()) {
+	if (bestDef->IsAttrBase()) {
+		buildPos = (bestDef->GetCostM() < 1000.0f) ? setupMgr->GetEnergyBase() : setupMgr->GetEnergyBase2();
+		CCircuitDef* bdef = (unit == nullptr) ? bestDef : unit->GetCircuitDef();
+		buildPos = circuit->GetTerrainManager()->GetBuildPosition(bdef, buildPos);
+	} else {
 		if (terrainMgr->IsZoneAlly(position)
 			|| ((circuit->GetFactoryManager()->GetFactoryCount() > 0) && (position.SqDistance2D(setupMgr->GetSmallEnergyPos()) < SQUARE(600.f))
 				&& ((unit == nullptr) || !unit->GetCircuitDef()->IsRoleComm())))  // TODO: instead of isComm check isFast
@@ -1359,10 +1384,6 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 			buildPos = position + (position - terrainMgr->GetTerrainCenter()).Normalize2D() * (bestDef->GetRadius() + SQUARE_SIZE * 6);  // geom::get_radial_pos(position, bestDef->GetRadius() + SQUARE_SIZE * 6);
 		}
 		CTerrainManager::CorrectPosition(buildPos);
-	} else {
-		buildPos = (bestDef->GetCostM() < 1000.0f) ? setupMgr->GetEnergyBase() : setupMgr->GetEnergyBase2();
-		CCircuitDef* bdef = (unit == nullptr) ? bestDef : unit->GetCircuitDef();
-		buildPos = circuit->GetTerrainManager()->GetBuildPosition(bdef, buildPos);
 	}
 
 	if (geom::is_valid(buildPos) && terrainMgr->CanBeBuiltAtSafe(bestDef, buildPos) &&

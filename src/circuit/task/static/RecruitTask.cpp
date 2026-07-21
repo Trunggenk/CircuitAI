@@ -15,7 +15,8 @@
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
-#include "Command.h"
+#include "spring/SpringUnit.h"
+
 #include "AISCommands.h"
 
 namespace circuit {
@@ -127,17 +128,17 @@ void CRecruitTask::Cancel()
 	}
 
 	CCircuitAI* circuit = manager->GetCircuit();
+	CUnitAPI* unitAPI = circuit->GetUnitAPI();
 	for (CCircuitUnit* unit : units) {
 		// Clear build-queue
-		auto commands = unit->GetUnit()->GetCurrentCommands();
+		int cmdSize = unitAPI->GetCMDQueueSize(unit->GetId());
 		std::vector<float> params;
-		params.reserve(commands.size());
-		for (springai::Command* cmd : commands) {
-			int cmdId = cmd->GetId();
+		params.reserve(cmdSize);
+		for (int commandIdx = 0; commandIdx < cmdSize; ++commandIdx) {
+			int cmdId = unitAPI->GetCMD(unit->GetId(), commandIdx);
 			if (cmdId < 0) {
 				params.push_back(cmdId);
 			}
-			delete cmd;
 		}
 		TRY_UNIT(circuit, unit,
 			unit->CmdRemove(std::move(params), UNIT_COMMAND_OPTION_ALT_KEY | UNIT_COMMAND_OPTION_CONTROL_KEY);

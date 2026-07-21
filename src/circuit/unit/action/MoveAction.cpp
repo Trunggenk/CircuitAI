@@ -57,31 +57,35 @@ void CMoveAction::Update(CCircuitAI* circuit)
 
 	TRY_UNIT(circuit, unit,
 		constexpr short options = UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY;
+		const AIFloat3& startPos = unit->GetPos(lastFrame);
+		AIFloat3 nextPos;
 		if (unit->IsAllowedToJump() && unit->IsJumpReady()) {
-			const AIFloat3& startPos = unit->GetPos(lastFrame);
 			const float range = unit->GetCircuitDef()->GetJumpRange();
 			const float sqRange = SQUARE(range);
 			for (; (step < pathMaxIndex) && (pPath->posPath[step].SqDistance2D(startPos) < sqRange); ++step);
-			AIFloat3 jumpPos = pPath->posPath[std::max(0, step - 1)];
-			const float sqJumpDist = jumpPos.SqDistance2D(startPos);
+			nextPos = pPath->posPath[std::max(0, step - 1)];
+			const float sqJumpDist = nextPos.SqDistance2D(startPos);
 			bool isBadJump = sqJumpDist < SQUARE(range * 0.5f);
 			if (!isBadJump) {
 				isBadJump = SQUARE(range * 1.2f) < sqJumpDist;
 				if (isBadJump) {
-					jumpPos = startPos + (jumpPos - startPos).Normalize2D() * range;
+					nextPos = startPos + (nextPos - startPos).Normalize2D() * range;
 				}
-				unit->CmdJumpTo(jumpPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+				unit->CmdJumpTo(nextPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
 			}
 			if (isBadJump) {
-				const AIFloat3& pos = pPath->posPath[step];
-				unit->CmdMoveTo(pos, options, lastFrame + FRAMES_PER_SEC * 60);
+				nextPos = pPath->posPath[step];
+				unit->CmdMoveTo(nextPos, options, lastFrame + FRAMES_PER_SEC * 60);
 			}
 		} else {
-			const AIFloat3& pos = pPath->posPath[step];
-			unit->CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
+			nextPos = pPath->posPath[step];
+			unit->CmdMoveTo(nextPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, lastFrame + FRAMES_PER_SEC * 60);
 		}
 		unit->CmdWantedSpeed(stepSpeed);
 
+		if (!geom::is_in_range(startPos, nextPos, DUP_CMD_DIST)) {
+			return;
+		}
 		for (int i = 2; (step < pathMaxIndex) && (i < 3); ++i) {
 			step = std::min(step + increment, pathMaxIndex);
 			const AIFloat3& pos = pPath->posPath[step];

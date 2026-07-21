@@ -11,7 +11,8 @@
 #include "CircuitAI.h"
 #include "util/Utils.h"
 
-#include "AISCommands.h"
+#include "Command.h"
+#include "Sim/Units/CommandAI/Command.h"
 
 namespace circuit {
 
@@ -38,19 +39,15 @@ void CSupportAction::Update(CCircuitAI* circuit)
 		return;
 	}
 
+	// TODO: Instead of polling order Guard command on leader change event.
+	//       Though REGROUP interrupts
 	CCircuitUnit* unit = static_cast<CCircuitUnit*>(ownerList);
-	CCircuitUnit* leader = static_cast<ISquadTask*>(unit->GetTask())->GetLeader();
-	const int frame = circuit->GetLastFrame();
-	const AIFloat3& pos = leader->GetPos(frame);
-	if (pos.SqDistance2D(unit->GetPos(frame)) < SQUARE(SQUARE_SIZE * 8)) {
-		return;  // stop pushing
+	if (unit->GetCurrentCommand()->GetId() == CMD_GUARD) {
+		return;
 	}
+	CCircuitUnit* leader = static_cast<ISquadTask*>(unit->GetTask())->GetLeader();
 	TRY_UNIT(circuit, unit,
-		if (unit->GetCircuitDef()->IsAttrMelee()) {
-			unit->GetUnit()->Guard(leader->GetUnit());
-		} else {
-			unit->CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
-		}
+		unit->GetUnit()->Guard(leader->GetUnit());
 	)
 }
 

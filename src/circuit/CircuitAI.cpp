@@ -34,6 +34,7 @@
 #include "spring/SpringCallback.h"
 #include "spring/SpringEngine.h"
 #include "spring/SpringMap.h"
+#include "spring/SpringUnit.h"
 
 #include "AISEvents.h"
 #include "AISCommands.h"
@@ -126,6 +127,7 @@ CCircuitAI::CCircuitAI(OOAICallback* clb)
 		, pathing(std::unique_ptr<Pathing>(clb->GetPathing()))
 		, drawer(nullptr)
 		, skirmishAI(std::unique_ptr<SkirmishAI>(clb->GetSkirmishAI()))
+		, unitAPI(nullptr)
 		, script(nullptr)
 		, category({0})
 #ifdef DEBUG_VIS
@@ -555,6 +557,7 @@ int CCircuitAI::Init(int skirmishAIId, const struct SSkirmishAICallback* sAICall
 	engine = std::unique_ptr<CEngine>(new CEngine(sAICallback, skirmishAIId));
 	map = std::unique_ptr<CMap>(new CMap(sAICallback, callback->GetMap()));
 	drawer = std::unique_ptr<Drawer>(map->GetDrawer());
+	unitAPI = std::unique_ptr<CUnitAPI>(new CUnitAPI(sAICallback, skirmishAIId));
 	const std::string modName = ValidateMod();
 	if (modName.empty()) {
 		return ERROR_INIT;

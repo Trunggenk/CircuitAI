@@ -10,9 +10,9 @@
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 
-#include "Command.h"
+#include "spring/SpringUnit.h"
+
 #include "AISCommands.h"
-#include "Sim/Units/CommandAI/Command.h"
 
 namespace circuit {
 
@@ -47,17 +47,18 @@ void IWaitTask::Start(CCircuitUnit* unit)
 	if (!isStop) {
 		return;
 	}
-	auto commands = unit->GetUnit()->GetCurrentCommands();
-	if (commands.empty()) {
+	CCircuitAI* circuit = manager->GetCircuit();
+	CUnitAPI* unitAPI = circuit->GetUnitAPI();
+	int cmdSize = unitAPI->GetCMDQueueSize(unit->GetId());
+	if (cmdSize == 0) {
 		return;
 	}
 	std::vector<float> params;
-	params.reserve(commands.size());
-	for (springai::Command* cmd : commands) {
-		params.push_back(cmd->GetId());
-		delete cmd;
+	params.reserve(cmdSize);
+	for (int commandIdx = 0; commandIdx < cmdSize; ++commandIdx) {
+		params.push_back(unitAPI->GetCMD(unit->GetId(), commandIdx));
 	}
-	TRY_UNIT(manager->GetCircuit(), unit,
+	TRY_UNIT(circuit, unit,
 		unit->CmdRemove(std::move(params), UNIT_COMMAND_OPTION_ALT_KEY | UNIT_COMMAND_OPTION_CONTROL_KEY);
 	)
 }

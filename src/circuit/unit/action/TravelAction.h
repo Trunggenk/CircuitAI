@@ -15,6 +15,8 @@
 
 namespace circuit {
 
+constexpr float DUP_CMD_DIST = 512.f;
+
 class ITravelAction: public IUnitAction {
 public:
 	ITravelAction(CCircuitUnit* owner, Type type, int squareSize, float speed = NO_SPEED_LIMIT);

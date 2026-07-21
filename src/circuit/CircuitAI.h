@@ -67,6 +67,7 @@ class CEnemyInfo;
 class COOAICallback;
 class CEngine;
 class CMap;
+class CUnitAPI;
 #ifdef DEBUG_VIS
 class CDebugDrawer;
 #endif
@@ -285,6 +286,7 @@ public:
 	springai::Drawer*     GetDrawer()     const { return drawer.get(); }
 	springai::SkirmishAI* GetSkirmishAI() const { return skirmishAI.get(); }
 	springai::Team*       GetTeam()       const { return team.get(); }
+	CUnitAPI*             GetUnitAPI()    const { return unitAPI.get(); }
 	CScriptManager*   GetScriptManager()   const { return scriptManager.get(); }
 	CSetupManager*    GetSetupManager()    const { return setupManager.get(); }
 	CEnemyManager*    GetEnemyManager()    const { return enemyManager.get(); }
@@ -335,6 +337,7 @@ private:
 	std::unique_ptr<springai::Drawer>     drawer;
 	std::unique_ptr<springai::SkirmishAI> skirmishAI;
 	std::unique_ptr<springai::Team>       team;
+	std::unique_ptr<CUnitAPI>             unitAPI;
 
 	static std::unique_ptr<CGameAttribute> gameAttribute;
 	static unsigned int gaCounter;

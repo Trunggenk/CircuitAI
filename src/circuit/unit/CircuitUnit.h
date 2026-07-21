@@ -129,6 +129,8 @@ public:
 	float GetDGunRange();
 	float GetHealthPercent();
 
+	springai::Command* GetCurrentCommand() const { return command; }
+
 	void CmdRemove(std::vector<float>&& params, short options = 0);
 	void CmdMoveTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
 	void CmdJumpTo(const springai::AIFloat3& pos, short options = 0, int timeout = INT_MAX);
