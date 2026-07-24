@@ -89,7 +89,7 @@ void AiUnitAdded(CCircuitUnit@ unit, Unit::UseAs usage)
 			priority = Task::Priority::NORMAL;
 			recruit  = Task::RecruitType::BUILDPOWER;
 		} else {
-			priority = Task::Priority::HIGH;
+			priority = Task::Priority::LOW;
 			recruit  = Task::RecruitType::FIREPOWER;
 		}
 		for (uint j = 0, jcount = opener[i].count; j < jcount; ++j)

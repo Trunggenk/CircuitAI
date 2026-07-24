@@ -37,11 +37,26 @@ CBEnergyTask::~CBEnergyTask()
 
 bool CBEnergyTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	// is extra buildpower required?
-	if (!IBuilderTask::CanAssignTo(unit)) {
+	// can unit build at all
+	const CCircuitDef* cdef = unit->GetCircuitDef();
+	if (((target == nullptr) || !cdef->IsAbleToAssist() || unit->IsAttrSolo()) && !cdef->CanBuild(buildDef)) {
 		return false;
 	}
-	const int frame = manager->GetCircuit()->GetLastFrame();
+	// is extra buildpower required?
+	CCircuitAI* circuit = manager->GetCircuit();
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	if (!economyMgr->IsEnergyStalling()
+		&& (cost.metal < buildPower.metal * buildDef->GetGoalBuildTime(economyMgr->GetAvgMetalIncome())))  // upper metal bound
+	{
+		return false;
+	}
+	// solo/initiator check
+	if (unit->IsAttrSolo() && (initiator != unit) && ((initiator != nullptr) || (target != nullptr))) {
+		return false;
+	}
+
+	// TODO: This check is to avoid commander marching back to base to build single solar. Re-evaluate it
+	const int frame = circuit->GetLastFrame();
 	return (cost.metal > 200.0f) || !unit->GetCircuitDef()->IsRoleComm()
 		|| (GetPosition().SqDistance2D(unit->GetPos(frame)) < SQUARE((unit->GetCircuitDef()->GetBuildDistance() + 128.f)))
 		|| !geom::is_valid(GetBuildPos());

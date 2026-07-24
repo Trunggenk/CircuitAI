@@ -267,6 +267,8 @@ private:
 public:
 	void ToggleVis();
 	void ToggleWidgetDraw();
+
+	void LogTerrainAt(CCircuitDef* cdef, const springai::AIFloat3& position);
 #endif
 };
 

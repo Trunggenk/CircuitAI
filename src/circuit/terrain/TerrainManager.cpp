@@ -1941,7 +1941,7 @@ bool CTerrainManager::CanBeBuiltAt(CCircuitDef* cdef, const AIFloat3& position)
 	SMobileType* mobileType = GetMobileTypeById(cdef->GetMobileId());
 	SImmobileType* immobileType = GetImmobileTypeById(cdef->GetImmobileId());
 	if (mobileType != nullptr) {  // a factory or mobile unit
-		if (mobileType->sector[iS].S == nullptr) {
+		if ((mobileType->sector[iS].area == nullptr) || !mobileType->sector[iS].area->areaUsable) {
 			return false;
 		}
 		if (immobileType != nullptr) {  // a factory
@@ -2140,6 +2140,26 @@ void CTerrainManager::ToggleWidgetDraw()
 		circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
 
 		UpdateVis();
+	}
+}
+
+void CTerrainManager::LogTerrainAt(CCircuitDef* cdef, const AIFloat3& position)
+{
+	const int iS = GetSectorIndex(position);
+	SMobileType* mobileType = GetMobileTypeById(cdef->GetMobileId());
+	SImmobileType* immobileType = GetImmobileTypeById(cdef->GetImmobileId());
+	circuit->LOG("TerrainData for %s", cdef->GetDef()->GetName());
+	circuit->LOG("mobileType %p", mobileType);
+	if (mobileType != nullptr) {  // a factory or mobile unit
+		circuit->LOG("mobileType area: %p", mobileType->sector[iS].area);
+		circuit->LOG("mobileType->sector[iS].S: %p", mobileType->sector[iS].S);
+		if (mobileType->sector[iS].area != nullptr) {
+			circuit->LOG("mobile area usable = %i | percentOfMap = %f", mobileType->sector[iS].area->areaUsable, mobileType->sector[iS].area->percentOfMap);
+		}
+	}
+	circuit->LOG("immobileType %p", immobileType);
+	if (immobileType != nullptr) {  // buildings
+		circuit->LOG("immobile sector present = %i", immobileType->sector.find(iS) != immobileType->sector.end());
 	}
 }
 #endif

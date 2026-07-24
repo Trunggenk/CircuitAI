@@ -10,9 +10,11 @@ void AiMain()
 {
 	// NOTE: Initialize config params
 // 	aiTerrainMgr.SetAllyZoneRange(600);  // returns 576: (multiples of 128) div 2
+// 	aiBuilderMgr.dangerHysteresis = 1 * MINUTE;  // frames
 // 	aiEconomyMgr.reclConvertEff = 2.f;
 // 	aiEconomyMgr.reclEnergyEff = 20.f;
-//
+	aiEconomyMgr.startMexTravel = AiRandom(7, 12);  // seconds
+
 // 	for (Id defId = 1, count = ai.GetDefCount(); defId <= count; ++defId) {
 // 		CCircuitDef@ cdef = ai.GetCircuitDef(defId);
 // 		AiLog(cdef.GetName() + " | threat = " + cdef.threat + " | power = " + cdef.power +

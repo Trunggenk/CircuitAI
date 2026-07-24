@@ -264,13 +264,13 @@ AIFloat3 CPathFinder::PathIndex2Pos(int index) const
 std::shared_ptr<IPathQuery> CPathFinder::CreatePathSingleQuery(
 		CCircuitUnit* unit, CThreatMap* threatMap,  // SetMapData
 		const AIFloat3& startPos, const AIFloat3& endPos, float maxRange,
-		NSMicroPather::HitFunc&& hitTest, float maxThreat, bool endPosOnly)
+		NSMicroPather::HitFunc&& hitTest, float minThreat, float maxThreat, bool endPosOnly)
 {
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryPathSingle>(*this, MakeQueryId());
 	CQueryPathSingle* query = static_cast<CQueryPathSingle*>(pQuery.get());
 
 	FillMapData(query, unit, threatMap, startPos.y);
-	query->InitQuery(startPos, endPos, maxRange, std::move(hitTest), maxThreat, endPosOnly);
+	query->InitQuery(startPos, endPos, maxRange, std::move(hitTest), minThreat, maxThreat, endPosOnly);
 
 	return pQuery;
 }
@@ -642,6 +642,7 @@ void CPathFinder::MakePath(IPathQuery* query, NSMicroPather::CMicroPather* micro
 	const int radius = q->GetMaxRange() / squareSize;
 	const NSMicroPather::HitFunc& hitTest = q->GetHitTest();
 	const float maxThreat = q->GetMaxThreat();
+	const float minThreat = q->GetMinThreat();
 
 	CPathInfo& iPath = q->GetPathInfoRef();
 	float& pathCost = q->GetPathCostRef();
@@ -653,7 +654,7 @@ void CPathFinder::MakePath(IPathQuery* query, NSMicroPather::CMicroPather* micro
 
 	micropather->SetMapData(canMoveArray, threatArray, moveFun, threatFun, areaData);
 	if (micropather->FindBestPathToPointOnRadius(Pos2MoveNode(startPos), Pos2MoveNode(endPos),
-			radius, maxThreat, hitTest, &iPath.path, &pathCost) == CMicroPather::SOLVED)
+			radius, minThreat, maxThreat, hitTest, &iPath.path, &pathCost) == CMicroPather::SOLVED)
 	{
 		micropather->FillPathInfo(iPath);
 	}
@@ -880,7 +881,7 @@ void CPathFinder::MakeCostMap(IPathQuery* query, NSMicroPather::CMicroPather* mi
 
 #ifdef DEBUG_VIS
 std::shared_ptr<IPathQuery> CPathFinder::CreateDbgPathQuery(CThreatMap* threatMap,
-		const AIFloat3& endPos, float maxRange, float maxThreat)
+		const AIFloat3& endPos, float maxRange, float minThreat, float maxThreat)
 {
 	if ((dbgDef == nullptr) || (dbgType < 0) || (dbgType > 3)) {
 		return nullptr;
@@ -909,7 +910,7 @@ std::shared_ptr<IPathQuery> CPathFinder::CreateDbgPathQuery(CThreatMap* threatMa
 	};
 
 	query->Init(moveArray, threatArray, std::move(moveFun), std::move(threatFun));
-	query->InitQuery(dbgPos, endPos, maxRange, nullptr, maxThreat, false);
+	query->InitQuery(dbgPos, endPos, maxRange, nullptr, minThreat, maxThreat, false);
 
 	return pQuery;
 }

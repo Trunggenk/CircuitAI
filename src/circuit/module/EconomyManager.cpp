@@ -59,6 +59,7 @@ CEconomyManager::CEconomyManager(CCircuitAI* circuit)
 		, isEnergyRequired(false)
 		, reclConvertEff(2.f)
 		, reclEnergyEff(20.f)
+		, startMexTravel(10.f)
 		, metal(SResourceInfo {-1, .0f, .0f, .0f, .0f})
 		, energy(SResourceInfo {-1, .0f, .0f, .0f, .0f})
 		, metalPullCorFrame(-1)
@@ -670,9 +671,8 @@ void CEconomyManager::Init()
 			ecoFactor = (circuit->GetAllyTeam()->GetAliveSize() - 1.0f) * ecoStep + 1.0f;
 		}), FRAMES_PER_SEC * 10);
 
-		const float maxTravel = 7 + rand() % (10 - 7 + 1);  // seconds
 		const int interval = allyTeam->GetSize() * FRAMES_PER_SEC;
-		startFactory = CScheduler::GameJob(&CEconomyManager::StartFactoryJob, this, maxTravel);
+		startFactory = CScheduler::GameJob(&CEconomyManager::StartFactoryJob, this);
 		scheduler->RunJobEvery(startFactory, 1, circuit->GetSkirmishAIId() + 0 + 5 * FRAMES_PER_SEC);
 		scheduler->RunJobEvery(CScheduler::GameJob(&CEconomyManager::UpdateStorageTasks, this),
 								interval, circuit->GetSkirmishAIId() + 1 + interval / 2 + 30 * FRAMES_PER_SEC);
@@ -992,6 +992,8 @@ void CEconomyManager::CorrectResourcePull(float metal, float energy)
 
 bool CEconomyManager::IsEnoughEnergy(IBuilderTask const* task, CCircuitDef const* conDef, float mod) const
 {
+	// FIXME: energy.pull should ignore builders on Wait, as
+	//        actual energy.pull is larger than reported by engine.
 	// NOTE: Doesn't count time to travel and high priority.
 	//       invAvailFraction is for equal distribution.
 	if (task->GetBuildType() == IBuilderTask::BuildType::ENERGY) {
@@ -1010,6 +1012,13 @@ bool CEconomyManager::IsEnoughEnergy(IBuilderTask const* task, CCircuitDef const
 	const float eiRequire = buildDef->GetCostE() / buildTime * mod;
 	return energy.current > (GetEnergyPullCor() + eiRequire - GetAvgEnergyIncome()) * timeToDeficit
 			+ (GetEnergyPullCor() + eiRequire - GetAvgEnergyIncome() * invAvailFraction) * deficitTime;
+}
+
+bool CEconomyManager::IsEnoughEnergyIncome(CCircuitDef const* buildDef, CCircuitDef const* conDef) const
+{
+	const float buildTime = buildDef->GetBuildTime() / conDef->GetWorkerTime();
+	const float eiRequire = buildDef->GetCostE() / std::max<float>(buildTime, EARLY_BUILD_SEC);
+	return GetAvgEnergyIncome() > eiRequire;
 }
 
 IBuilderTask* CEconomyManager::MakeEconomyTasks(const AIFloat3& position, CCircuitUnit* unit)
@@ -1742,7 +1751,7 @@ IBuilderTask* CEconomyManager::CheckMobileAssistRequired(const AIFloat3& positio
 	return nullptr;
 }
 
-void CEconomyManager::StartFactoryJob(const float seconds)
+void CEconomyManager::StartFactoryJob()
 {
 	CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 	if ((factoryMgr->GetFactoryCount() == 0) && circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::FACTORY).empty()) {
@@ -1750,7 +1759,7 @@ void CEconomyManager::StartFactoryJob(const float seconds)
 		const AIFloat3 pos = (comm != nullptr) ? comm->GetPos(circuit->GetLastFrame()) : AIFloat3(-RgtVector);
 		if (!factoryMgr->IsSwitchTime() && (comm != nullptr) && (comm->GetTask()->GetType() == IUnitTask::Type::BUILDER)) {
 			IBuilderTask* taskB = static_cast<IBuilderTask*>(comm->GetTask());
-			const float maxDist = comm->GetCircuitDef()->GetBuildDistance() + comm->GetCircuitDef()->GetSpeed() * seconds;
+			const float maxDist = comm->GetCircuitDef()->GetBuildDistance() + comm->GetCircuitDef()->GetSpeed() * startMexTravel;
 			if (taskB->GetPosition().SqDistance2D(pos) > SQUARE(maxDist)) {
 				factoryMgr->RaiseSwitchTime();
 			}

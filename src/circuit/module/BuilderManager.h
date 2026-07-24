@@ -325,8 +325,7 @@ public:
 private:
 	virtual IUnitTask* DefaultMakeTask(CCircuitUnit* unit) override;
 	IBuilderTask* MakeEnergizerTask(CCircuitUnit* unit, const CQueryCostMap* query);
-	IBuilderTask* MakeCommPeaceTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
-	IBuilderTask* MakeCommDangerTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
+	IBuilderTask* MakeCommTask(CCircuitUnit* unit, const CQueryCostMap* query, float sqMaxBaseRange);
 	IBuilderTask* MakeBuilderTask(CCircuitUnit* unit, const CQueryCostMap* query);
 	IBuilderTask* CreateBuilderTask(const springai::AIFloat3& position, CCircuitUnit* unit);
 
@@ -353,6 +352,8 @@ private:
 	float goalExecTime = 0.f;  // seconds
 	std::set<CCircuitUnit*> workers;
 	std::map<CCircuitUnit*, std::shared_ptr<IPathQuery>> costQueries;  // IPathQuery owner
+	std::map<CCircuitUnit*, int> dangerTime;  // unit: frame
+	int dangerHysteresis;  // frames
 
 	CCircuitDef* terraDef = nullptr;
 	std::unordered_map<IBuilderTask::BT, std::unordered_map<CCircuitDef*, SBuildChain*>> buildChains;  // owner

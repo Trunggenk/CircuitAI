@@ -19,7 +19,7 @@ public:
 
 	void InitQuery(const springai::AIFloat3& startPos, const springai::AIFloat3& endPos,
 			float maxRange, NSMicroPather::HitFunc&& hitTest,
-			float maxThreat, bool endPosOnly);
+			float minThreat, float maxThreat, bool endPosOnly);
 
 	void Prepare();
 
@@ -35,6 +35,7 @@ public:
 	const float GetMaxRange() const { return maxRange; }
 	const NSMicroPather::HitFunc& GetHitTest() const { return hitTest; }
 	const float GetMaxThreat() const { return maxThreat; }
+	const float GetMinThreat() const { return minThreat; }
 
 	// Result
 	const std::shared_ptr<CPathInfo>& GetPathInfo() const { return pPath; }
@@ -48,6 +49,7 @@ private:
 	springai::AIFloat3 endPos;
 	float maxRange = 0.f;
 	NSMicroPather::HitFunc hitTest;
+	float minThreat = 0.f;
 	float maxThreat = 0.f;
 	bool endPosOnly = false;
 };

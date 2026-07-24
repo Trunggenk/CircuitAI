@@ -877,6 +877,7 @@ int CCircuitAI::Message(int playerId, const char* message)
 	const char cmdBTask[]   = "~btask";
 	const char cmdChoke[]   = "~choke";
 	const char cmdMetal[]   = "~metal";
+	const char cmdMouse[]   = "~mouse";
 
 	const char cmdThreat[]  = "~threat";
 	const char cmdWTDraw[]  = "~wtdraw";  // widget threat draw
@@ -964,6 +965,20 @@ int CCircuitAI::Message(int playerId, const char* message)
 	}
 	else if (strncmp(message, cmdMetal, 6) == 0) {
 		gameAttribute->GetMetalData().ToggleTAVis(lastFrame);
+	}
+	else if (strncmp(message, cmdMouse, 6) == 0) {
+		AIFloat3 mousePos = map->GetMousePos();
+		LOG("%f, %f, %f", mousePos.x, mousePos.y, mousePos.z);
+		auto selection = callback->GetSelectedUnits();
+		if (!selection.empty()) {
+			for (Unit* u : selection) {
+				CCircuitUnit* unit = GetTeamUnit(u->GetUnitId());
+				if (unit != nullptr) {
+					terrainManager->LogTerrainAt(unit->GetCircuitDef(), mousePos);
+				}
+			}
+			utils::free_clear(selection);
+		}
 	}
 
 	else if (strncmp(message, cmdThreat, 7) == 0) {

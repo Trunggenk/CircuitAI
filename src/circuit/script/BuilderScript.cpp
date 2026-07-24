@@ -68,6 +68,8 @@ CBuilderScript::CBuilderScript(CScriptManager* scr, CBuilderManager* mgr)
 	r = engine->RegisterObjectMethod("CBuilderManager", "IUnitTask@+ Enqueue(const SServBTask& in)", asMETHODPR(CBuilderManager, Enqueue, (const TaskB::SServBTask&), IUnitTask*), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CBuilderManager", "IUnitTask@+ EnqueueRetreat()", asMETHOD(CBuilderManager, EnqueueRetreat), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CBuilderManager", "uint GetWorkerCount() const", asMETHOD(CBuilderManager, GetWorkerCount), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("CBuilderManager", "int dangerHysteresis", asOFFSET(CBuilderManager, dangerHysteresis)); ASSERT(r >= 0);
+
 }
 
 CBuilderScript::~CBuilderScript()

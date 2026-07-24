@@ -245,7 +245,8 @@ namespace NSMicroPather {
 					const CostFunc& moveFun, const CostFunc& threatFun, const terrain::SAreaData* areaData);
 			int FindBestPathToAnyGivenPoint(void* startNode, VoidVec& endNodes, VoidVec& targets, float maxThreat,
 					IndexVec* path, float* cost);
-			int FindBestPathToPointOnRadius(void* startNode, void* endNode, int radius, float maxThreat, HitFunc hitTest,
+			int FindBestPathToPointOnRadius(void* startNode, void* endNode, int radius,
+					float minThreat, float maxThreat, HitFunc hitTest,
 					IndexVec* path, float* cost);
 			int FindWidePathToBus(void* startNode, VoidVec& endNodes, const int howWide,
 					IndexVec* path, float* cost);

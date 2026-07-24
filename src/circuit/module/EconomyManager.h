@@ -122,6 +122,7 @@ public:
 	float GetMetalPullCor() const { return metal.pull - metalPullCor; }
 	float GetEnergyPullCor() const { return energy.pull - energyPullCor; }
 	bool IsEnoughEnergy(IBuilderTask const* task, CCircuitDef const* conDef, float mod = 1.f) const;
+	bool IsEnoughEnergyIncome(CCircuitDef const* buildDef, CCircuitDef const* conDef) const;
 
 	IBuilderTask* MakeEconomyTasks(const springai::AIFloat3& position, CCircuitUnit* unit);
 	IBuilderTask* UpdateMetalTasks(const springai::AIFloat3& position, CCircuitUnit* unit);
@@ -133,7 +134,7 @@ public:
 	IBuilderTask* UpdateStorageTasks();
 	IBuilderTask* UpdatePylonTasks();
 	IBuilderTask* CheckMobileAssistRequired(const springai::AIFloat3& position, CCircuitUnit* unit);
-	void StartFactoryJob(const float seconds);
+	void StartFactoryJob();
 	CBFactoryTask* PickNextFactory(const springai::AIFloat3& position, bool isStart);
 
 	void AddMorphee(CCircuitUnit* unit);
@@ -275,6 +276,7 @@ private:
 	bool isEnergyRequired;
 	float reclConvertEff;
 	float reclEnergyEff;
+	float startMexTravel;
 
 	struct SResourceInfo {
 		int pullFrame;

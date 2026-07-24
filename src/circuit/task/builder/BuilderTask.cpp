@@ -115,7 +115,7 @@ bool IBuilderTask::CanAssignTo(CCircuitUnit* unit) const
 		return false;
 	}
 	// energy income check
-	if ((target == nullptr) && !economyMgr->IsEnergyFull() && !economyMgr->IsEnoughEnergy(this, cdef, 0.8f)) {  // lower energy bound
+	if ((target == nullptr) && economyMgr->IsEnergyStalling() && !economyMgr->IsEnoughEnergy(this, cdef, 0.8f)) {  // lower energy bound
 		return false;
 	}
 	// solo/initiator check
@@ -496,8 +496,23 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 		if ((buildType != BuildType::GUARD)
 			&& ((executors.size() < 2) || !unit->IsAttrBase()))
 		{
+			if (cdef->IsRoleComm()) {
+				return true;
+			}
+			bool prio = true;
+			switch (buildType) {
+				case BuildType::ENERGY:
+				case BuildType::GEO:
+					prio = ecoMgr->IsEnergyStalling() || !ecoMgr->IsMetalEmpty();
+					break;
+				case BuildType::CONVERT:
+				case BuildType::MEX:
+				case BuildType::MEXUP:
+					prio = !ecoMgr->IsEnergyStalling() || ecoMgr->IsMetalEmpty();
+					break;
+				default: break;
+			}
 			TRY_UNIT(circuit, unit,
-				const bool prio = !ecoMgr->IsEnergyStalling() || (buildType == BuildType::ENERGY) || (buildType == BuildType::GEO);
 				unit->CmdBARPriority(prio ? 1.f : 0.f);
 				if (unit->GetTravelAct()->IsFinished()) {
 					unit->CmdWait(ecoMgr->IsEnergyEmpty() && (buildType != BuildType::ENERGY) && (buildType != BuildType::GEO)
@@ -562,7 +577,7 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			unit, circuit->GetThreatMap(),
-			startPos, endPos, range);
+			startPos, endPos, range, nullptr, cdef->GetPower() * 0.1f);
 	pathQueries[unit] = query;
 
 	pathfinder->RunQuery(circuit->GetScheduler().get(), query, [this](const IPathQuery* query) {

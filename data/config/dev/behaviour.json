@@ -74,6 +74,7 @@
 		// "ret_hold" - hold fire on retreat
 		// "ret_fight" - fight on retreat
 		// "solo" - construction initiator, won't join task if already started
+		// "base" - base builder, high priority for energy and storage tasks
 		// "dg_cost" - DGun by metal cost instead of by threat
 		// "jump" - enable jump on regular move
 		// "onoff" - auto-assigned when "on" tag is present

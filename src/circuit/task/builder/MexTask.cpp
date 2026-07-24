@@ -47,13 +47,28 @@ CBMexTask::~CBMexTask()
 
 bool CBMexTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!IBuilderTask::CanAssignTo(unit)) {
+	// can unit build at all
+	const CCircuitDef* cdef = unit->GetCircuitDef();
+	if (((target == nullptr) || !cdef->IsAbleToAssist() || unit->IsAttrSolo()) && !cdef->CanBuild(buildDef)) {
 		return false;
 	}
+	// is extra buildpower required?
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (circuit->GetEconomyManager()->IsEnergyStalling() && (circuit->GetBuilderManager()->GetWorkerCount() <= 2)) {
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	if (cost.metal < buildPower.metal * buildDef->GetGoalBuildTime(economyMgr->GetAvgMetalIncome())) {  // upper metal bound
 		return false;
 	}
+	// energy income check
+	if ((target == nullptr) && !economyMgr->IsEnoughEnergyIncome(buildDef, cdef)
+		&& !economyMgr->IsEnoughEnergy(this, cdef, 0.8f))  // lower energy bound
+	{
+		return false;
+	}
+	// solo/initiator check
+	if (unit->IsAttrSolo() && (initiator != unit) && ((initiator != nullptr) || (target != nullptr))) {
+		return false;
+	}
+
 	if (unit->GetCircuitDef()->IsAttacker()) {
 		return true;
 	}

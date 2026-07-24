@@ -22,12 +22,13 @@ CQueryPathSingle::~CQueryPathSingle()
 
 void CQueryPathSingle::InitQuery(const AIFloat3& startPos, const AIFloat3& endPos,
 		float maxRange, NSMicroPather::HitFunc&& hitTest,
-		float maxThreat, bool endPosOnly)
+		float minThreat, float maxThreat, bool endPosOnly)
 {
 	this->startPos = startPos;
 	this->endPos = endPos;
 	this->maxRange = maxRange;
 	this->hitTest = hitTest;
+	this->minThreat = minThreat;
 	this->maxThreat = maxThreat;
 	this->endPosOnly = endPosOnly;
 }

@@ -38,6 +38,7 @@ CEconomyScript::CEconomyScript(CScriptManager* scr, CEconomyManager* mgr)
 	r = engine->RegisterObjectProperty("CEconomyManager", "bool isEnergyFull", asOFFSET(CEconomyManager, isEnergyFull)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CEconomyManager", "float reclConvertEff", asOFFSET(CEconomyManager, reclConvertEff)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CEconomyManager", "float reclEnergyEff", asOFFSET(CEconomyManager, reclEnergyEff)); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("CEconomyManager", "float startMexTravel", asOFFSET(CEconomyManager, startMexTravel)); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CEconomyManager", "float GetMetalMake(const CCircuitDef@) const", asMETHOD(CEconomyManager, GetMetalMake), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CEconomyManager", "float GetEnergyMake(const CCircuitDef@) const", asMETHOD(CEconomyManager, GetEnergyMake), asCALL_THISCALL); ASSERT(r >= 0);
 }
