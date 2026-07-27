@@ -1301,12 +1301,16 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	CCircuitDef* hopeDef = nullptr;
 	metalIncome = std::min(metalIncome, energyIncome) * energyFactor;
 	const float buildPower = std::min(builderMgr->GetBuildPower(), metalIncome);
-	const int taskSize = builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY).size();
 	energyIncome *= isEnergyStalling ? 0.5f : 1.f;
 	isEnergyStalling |= isEnergyRequired;
 	bool isLastHope = isEnergyStalling;
 	const int frame = circuit->GetLastFrame();
 	float bestResDist = std::numeric_limits<float>::max();
+
+	std::map<CCircuitDef::Id, int> defCounts;
+	for (IBuilderTask* task : builderMgr->GetTasks(IBuilderTask::BuildType::ENERGY)) {
+		++defCounts[task->GetBuildDef()->GetId()];
+	}
 
 	const auto& infos = energyDefs.GetInfos();
 	const float curWind = circuit->GetMap()->GetCurWind();
@@ -1334,7 +1338,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 
 		if (engy.cdef->GetCount() < engy.data.cond.limit) {
 			isLastHope = false;
-			if (taskSize < (int)(buildPower / engy.cdef->GetCostM() * 4 + 1)) {
+			if (defCounts[engy.cdef->GetId()] < (int)(buildPower / engy.cdef->GetCostM() * 4 + 1)) {
 				if (engy.cdef->IsWind() && !checkWind(i)) {
 					continue;
 				}
@@ -1360,7 +1364,7 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 			break;
 		} else if (hopeDef == nullptr) {
 			hopeDef = engy.cdef;
-			isLastHope = isLastHope && (taskSize < (int)(buildPower / engy.cdef->GetCostM() * 4 + 1));
+			isLastHope = isLastHope && (defCounts[engy.cdef->GetId()] < (int)(buildPower / engy.cdef->GetCostM() * 4 + 1));
 		}
 	}
 
