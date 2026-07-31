@@ -965,7 +965,6 @@ IUnitTask* CBuilderManager::DefaultMakeTask(CCircuitUnit* unit)
 	}
 
 	std::shared_ptr<CQueryCostMap> pQuery = std::static_pointer_cast<CQueryCostMap>(query);
-	circuit->GetEconomyManager()->IsEnergyStalling();  // Only for UpdateEconomy
 
 	if (cdef->IsRoleComm() && (circuit->GetFactoryManager()->GetFactoryCount() > 0)) {  // hide commander?
 		CEnemyManager* enemyMgr = circuit->GetEnemyManager();

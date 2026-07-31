@@ -53,7 +53,7 @@ public:
 	};
 
 public:
-	CAllyTeam(const TeamIds& tids, const geom::CRegion& sb);
+	CAllyTeam(const TeamIds& tids, const geom::CRegion* sb);
 	~CAllyTeam();
 
 	int GetSize() const { return teamIds.size(); }
@@ -61,7 +61,7 @@ public:
 	const TeamIds& GetTeamIds() const { return teamIds; }
 	const Id GetLeaderId() const;
 	const CCircuitAI* GetLeader() const { return circuit; }
-	const geom::CRegion& GetStartBox() const { return startBox; }
+	const geom::CRegion& GetStartBox() const { return *startBox; }
 
 	void Init(CCircuitAI* circuit, float decloakRadius);
 	void NonDefaultThreats(std::set<CCircuitDef::RoleT>&& modRoles, CCircuitAI* ai);
@@ -121,7 +121,7 @@ private:
 	CCircuitAI* circuit;  // authority
 	std::shared_ptr<IMainJob> releaseTask;
 	TeamIds teamIds;
-	geom::CRegion startBox;
+	const geom::CRegion* startBox;
 
 	int initCount;
 	int resignSize;

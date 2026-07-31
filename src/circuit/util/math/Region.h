@@ -77,9 +77,10 @@ private:
 
 class CRegion final {
 public:
-	CRegion() : area(0.f) {}  // for easy use with std::map
 	CRegion(std::vector<CPolygon*>&& polys);
 	CRegion(SBox&& b);
+	CRegion(const CRegion& other) = delete;
+	CRegion& operator=(const CRegion& other) = delete;
 	~CRegion();
 
 	const SBox& GetBox() const { return box; }  // bounding box

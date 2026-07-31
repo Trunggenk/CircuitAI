@@ -29,6 +29,9 @@ CSetupData::CSetupData()
 CSetupData::~CSetupData()
 {
 	utils::free_clear(allyTeams);
+	for (auto kv : boxes) {
+		delete kv.second;
+	}
 }
 
 void CSetupData::ParseSetupScript(CCircuitAI* circuit, const char* setupScript)
@@ -180,7 +183,7 @@ CSetupData::BoxMap CSetupData::ReadStartBoxes(const std::string& script, CMap* m
 				}
 				polys.push_back(new geom::CPolygon(std::move(verts)));
 			}
-			boxes[boxId] = geom::CRegion(std::move(polys));
+			boxes[boxId] = new geom::CRegion(std::move(polys));
 		}
 
 	} else {
@@ -217,7 +220,7 @@ CSetupData::BoxMap CSetupData::ReadStartBoxes(const std::string& script, CMap* m
 			startbox.right  *= width;
 			startbox.top    *= height;
 			startbox.bottom *= height;
-			boxes[allyTeamId] = geom::CRegion(std::move(startbox));
+			boxes[allyTeamId] = new geom::CRegion(std::move(startbox));
 
 			start = bodyEnd;
 		}
