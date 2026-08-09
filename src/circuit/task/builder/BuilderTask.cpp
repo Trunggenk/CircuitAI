@@ -285,8 +285,23 @@ bool IBuilderTask::Execute(CCircuitUnit* unit)
 		}
 	}
 
-	// Alter/randomize position
-	AIFloat3 pos = (shake > .0f) ? utils::get_near_pos(position, shake) : position;
+	// Onto the base grid where there is one, otherwise the old jitter.
+	//
+	// Excluded types have to stand on a particular piece of ground and would be
+	// ruined by being moved: MEX/MEXUP on the metal spot, GEO/GEOUP on the vent,
+	// DEFENCE/BUNKER/BIG_GUN on the line they were sited to cover, PYLON on the
+	// grid link it was placed to make. FACTORY is excluded too, but for the
+	// opposite reason -- packing labs into the lattice is what leaves no room to
+	// tech up, and the point of the lattice is to keep that room free for them.
+	AIFloat3 pos;
+	const bool isFixed = (buildType == BuildType::MEX) || (buildType == BuildType::MEXUP)
+			|| (buildType == BuildType::GEO) || (buildType == BuildType::GEOUP)
+			|| (buildType == BuildType::DEFENCE) || (buildType == BuildType::BUNKER)
+			|| (buildType == BuildType::BIG_GUN) || (buildType == BuildType::PYLON)
+			|| (buildType == BuildType::FACTORY) || (buildType == BuildType::TERRAFORM);
+	if (isFixed || !circuit->SnapToBaseGrid(position, pos)) {
+		pos = (shake > .0f) ? utils::get_near_pos(position, shake) : position;
+	}
 	CTerrainManager::CorrectPosition(pos);
 
 	const float searchRadius = 200 * SQUARE_SIZE;

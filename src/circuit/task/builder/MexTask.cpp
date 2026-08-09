@@ -128,7 +128,7 @@ bool CBMexTask::Reevaluate(CCircuitUnit* unit)
 	if (circuit->IsAllyAware()) {
 		auto closeTask = [this, circuit]() {
 			circuit->GetEconomyManager()->SetOpenMexSpot(spotId, true);
-			spotId = 0;  // prevent spot opening on Cancel
+			spotId = -1;  // prevent spot opening on Cancel, which guards on spotId >= 0
 			manager->AbortTask(this);
 			return false;
 		};

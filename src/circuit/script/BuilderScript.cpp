@@ -68,6 +68,11 @@ CBuilderScript::CBuilderScript(CScriptManager* scr, CBuilderManager* mgr)
 	r = engine->RegisterObjectMethod("CBuilderManager", "IUnitTask@+ Enqueue(const SServBTask& in)", asMETHODPR(CBuilderManager, Enqueue, (const TaskB::SServBTask&), IUnitTask*), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CBuilderManager", "IUnitTask@+ EnqueueRetreat()", asMETHOD(CBuilderManager, EnqueueRetreat), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CBuilderManager", "uint GetWorkerCount() const", asMETHOD(CBuilderManager, GetWorkerCount), asCALL_THISCALL); ASSERT(r >= 0);
+	// apex: see BuilderManager.h -- lets script report the task budget that gates
+	// mex creation, instead of inferring it.
+	r = engine->RegisterObjectMethod("CBuilderManager", "uint GetBuildTaskCount() const", asMETHOD(CBuilderManager, GetBuildTaskCount), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CBuilderManager", "bool CanEnqueueTask(uint) const", asMETHOD(CBuilderManager, CanEnqueueTask), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CBuilderManager", "uint GetTaskCountOf(int) const", asMETHOD(CBuilderManager, GetTaskCountOf), asCALL_THISCALL); ASSERT(r >= 0);
 }
 
 CBuilderScript::~CBuilderScript()

@@ -78,6 +78,7 @@ public:
 	CCircuitUnit* GetCommander() const { return commander; }
 
 	CAllyTeam* GetAllyTeam() const;
+	int FindAllyTeamOf(int teamId) const;
 
 	void ReadConfig();
 	bool IsAntiCap() const { return antiCapProb > (float)rand() / RAND_MAX; }

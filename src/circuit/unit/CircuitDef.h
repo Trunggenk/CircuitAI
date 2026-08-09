@@ -326,6 +326,12 @@ public:
 	bool IsAssist() const { return isAssist; }
 	void SetIsRadar(bool value) { isRadar = value; }
 	bool IsRadar() const { return isRadar; }
+	// Jammers were not classified at all, so the SENSOR build condition -- which
+	// exists precisely to stop a second sensor going up inside an existing one's
+	// coverage -- fell through to isValid=false for them and could not be used.
+	// Result: two jammers built side by side, doubling upkeep for no extra area.
+	void SetIsJammer(bool value) { isJammer = value; }
+	bool IsJammer() const { return isJammer; }
 	void SetIsSonar(bool value) { isSonar = value ; }
 	bool IsSonar() const { return isSonar; }
 	void SetIsDecoy(bool value) { isDecoy = value; }
@@ -478,6 +484,7 @@ private:
 	bool isPylon : 1;
 	bool isAssist : 1;
 	bool isRadar : 1;
+	bool isJammer : 1;
 	bool isSonar : 1;
 	bool isDecoy : 1;
 	bool isOnSlow : 1;

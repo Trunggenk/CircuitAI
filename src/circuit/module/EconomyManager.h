@@ -107,15 +107,26 @@ public:
 	bool IsExcessed() const { return metalProduced > metalUsed; }
 	int GetBuildDelay() const { return buildDelay; }
 
+	// mexSpots/geoSpots are sized in Init(), which is deferred -- before it runs
+	// they are empty and every id is out of range.
+	bool IsValidMexSpot(int spotId) const { return (spotId >= 0) && ((size_t)spotId < mexSpots.size()); }
+	bool IsValidGeoSpot(int spotId) const { return (spotId >= 0) && ((size_t)spotId < geoSpots.size()); }
 	bool IsAllyOpenMexSpot(int spotId) const;
 	bool IsOpenMexSpot(int spotId) const;
 	void SetOpenMexSpot(int spotId, bool value);
-	bool IsUpgradingMexSpot(int spotId) const { return mexSpots[spotId].isUp; }
-	void SetUpgradingMexSpot(int spotId, bool value) { mexSpots[spotId].isUp = value; }
-	bool IsOpenGeoSpot(int spotId) const { return geoSpots[spotId].isOpen; }
-	void SetOpenGeoSpot(int spotId, bool value) { geoSpots[spotId].isOpen = value; }
-	bool IsUpgradingGeoSpot(int spotId) const { return geoSpots[spotId].isUp; }
-	void SetUpgradingGeoSpot(int spotId, bool value) { geoSpots[spotId].isUp = value; }
+	bool IsUpgradingMexSpot(int spotId) const { return IsValidMexSpot(spotId) && mexSpots[spotId].isUp; }
+	void SetUpgradingMexSpot(int spotId, bool value) { if (IsValidMexSpot(spotId)) mexSpots[spotId].isUp = value; }
+	bool IsOpenGeoSpot(int spotId) const { return IsValidGeoSpot(spotId) && geoSpots[spotId].isOpen; }
+	void SetOpenGeoSpot(int spotId, bool value) { if (IsValidGeoSpot(spotId)) geoSpots[spotId].isOpen = value; }
+	bool IsUpgradingGeoSpot(int spotId) const { return IsValidGeoSpot(spotId) && geoSpots[spotId].isUp; }
+	void SetUpgradingGeoSpot(int spotId, bool value) { if (IsValidGeoSpot(spotId)) geoSpots[spotId].isUp = value; }
+
+	// apex: spot queries a script can call safely. FindOpenMexSpot applies the
+	// same guards UpdateMetalTasks does; EnqueueMexAt is the only way to create
+	// a MEX task from script that carries a real spotId.
+	int FindOpenMexSpot(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	springai::AIFloat3 GetMexSpotPos(int spotId) const;
+	IBuilderTask* EnqueueMexAt(CCircuitUnit* unit, int spotId);
 	bool IsIgnorePull(const IBuilderTask* task) const;
 	bool IsIgnoreStallingPull(const IBuilderTask* task) const;
 	void CorrectResourcePull(float metal, float energy);

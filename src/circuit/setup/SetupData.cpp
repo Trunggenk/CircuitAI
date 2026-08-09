@@ -7,6 +7,7 @@
 
 #include "setup/SetupData.h"
 #include "CircuitAI.h"
+#include "unit/ally/AllyTeam.h"
 #include "util/math/Region.h"
 #include "util/Utils.h"
 
@@ -224,6 +225,16 @@ CSetupData::BoxMap CSetupData::ReadStartBoxes(const std::string& script, CMap* m
 	}
 
 	return boxes;
+}
+
+int CSetupData::FindAllyTeamOf(int teamId) const
+{
+	for (size_t i = 0; i < allyTeams.size(); ++i) {
+		if ((allyTeams[i] != nullptr) && (allyTeams[i]->GetTeamIds().count(teamId) > 0)) {
+			return int(i);
+		}
+	}
+	return -1;
 }
 
 } // namespace circuit

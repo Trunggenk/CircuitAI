@@ -262,9 +262,16 @@ void CMetalManager::FindWithinRangeSpots(const AIFloat3& posFrom, const AIFloat3
 
 void CMetalManager::SetOpenSpot(int index, bool value)
 {
+	if (!IsValidSpot(index)) {
+		return;
+	}
 	if (metalInfos[index].isOpen != value) {
 		metalInfos[index].isOpen = value;
-		clusterInfos[metalInfos[index].clusterId].queuedCount += value ? -1 : 1;
+		// clusterId stays -1 until clusterization assigns it.
+		const int clusterId = metalInfos[index].clusterId;
+		if ((clusterId >= 0) && ((size_t)clusterId < clusterInfos.size())) {
+			clusterInfos[clusterId].queuedCount += value ? -1 : 1;
+		}
 	}
 }
 

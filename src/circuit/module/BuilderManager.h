@@ -268,6 +268,18 @@ public:
 	void DelBuildPower(CCircuitUnit* unit);
 	float GetBuildPower() const { return buildPower; }
 	bool CanEnqueueTask(const unsigned mod = 8) const { return buildTasksCount < workers.size() * mod; }
+	// apex: the economy generator (CEconomyManager::MakeEconomyTasks, which is
+	// where mex and mex-upgrade tasks are created at Priority::HIGH) refuses to
+	// run at all when CanEnqueueTask is false. Script could not see that number,
+	// so a stalled expansion was indistinguishable from a deliberate one.
+	unsigned int GetBuildTaskCount() const { return buildTasksCount; }
+	// apex: per-type census. A pool of 71 tasks that nobody works says nothing
+	// until you know WHAT they are -- unreachable mexes and far-away reclaim jobs
+	// look identical to real work from the outside.
+	unsigned int GetTaskCountOf(int type) const {
+		if ((type < 0) || (type >= static_cast<int>(IBuilderTask::BuildType::_SIZE_))) return 0;
+		return buildTasks[type].size();
+	}
 	const std::set<IBuilderTask*>& GetTasks(IBuilderTask::BuildType type) const;
 	void ActivateTask(IBuilderTask* task);
 

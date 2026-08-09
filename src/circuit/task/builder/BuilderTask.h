@@ -156,6 +156,16 @@ protected:
 	SResource savedIncome;
 	int buildFails;
 
+	// apexearth: "We're totally out of metal and we have three construction
+	// turrets helping to build something, but we don't even have the metal to
+	// build it. One of those conturrets could have been reclaiming... Ideally
+	// would be to insert the reclaim request ahead of their current command so
+	// that as soon as it finishes, they all immediately return to what they
+	// were doing... if you have <2% metal and reclaim is in your vicinity -
+	// reclaim!" Per-task, not per-unit: cheap, and the units on one task are
+	// already spatially close, so one check covers all of them well enough.
+	int nextMetalEmptyReclaim = 0;
+
 	decltype(units)::const_iterator unitIt;  // update iterator
 
 	std::set<CCircuitUnit*> traveled;

@@ -9,6 +9,7 @@
 #include "module/BuilderManager.h"
 #include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
+#include "map/ThreatMap.h"
 #include "scheduler/Scheduler.h"
 #include "script/EconomyScript.h"
 #include "setup/SetupManager.h"
@@ -36,9 +37,25 @@
 
 namespace circuit {
 
+// Energy bank above which an energy-bearing feature (a tree) is not worth a
+// constructor-second. apexearth: "do not reclaim for energy if we are >20%
+// energy".
+#define RECLAIM_ENERGY_MAX	0.20f
+
+
 using namespace springai;
 
 #define PYLON_RANGE		500.0f
+
+// Energy-condition relaxation over game time; see UpdateEnergyTasks.
+#define ENERGY_GATE_FULL_SEC	600		// unchanged for the first ten minutes
+#define ENERGY_GATE_LOW_SEC		1500	// fully relaxed by twenty-five
+// Neutralised. Relaxing the energy condition tilted the pick toward fusion-class
+// generators, and while one 4500-metal nanoframe stands the task-size formula
+// allows no other energy task at all -- so energy flatlines, and every consumer
+// of IsEnergyStalling (mexes, mex upgrades, nanos, new factories) is suppressed
+// at once while metal keeps accruing.
+#define ENERGY_GATE_FLOOR		1.0f
 
 const char* RES_NAME_METAL = "Metal";
 const char* RES_NAME_ENERGY = "Energy";
@@ -922,16 +939,106 @@ bool CEconomyManager::IsAllyOpenMexSpot(int spotId) const
 
 bool CEconomyManager::IsOpenMexSpot(int spotId) const
 {
+	if (!IsValidMexSpot(spotId)) {
+		return false;
+	}
 	return mexSpots[spotId].isOpen && ((isAllyMexMax ? circuit->GetMetalManager()->GetMexCount() : mexCount) < mexMax);
 }
 
 void CEconomyManager::SetOpenMexSpot(int spotId, bool value)
 {
+	if (!IsValidMexSpot(spotId)) {
+		return;
+	}
 	if (mexSpots[spotId].isOpen == value) {
 		return;
 	}
 	mexSpots[spotId].isOpen = value;
 	value ? --mexCount : ++mexCount;
+}
+
+// apex: the spot queries a script can reach. Script had no way to name a metal
+// spot, so a reroute could only trade between MEX tasks the engine had already
+// created.
+int CEconomyManager::FindOpenMexSpot(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	if ((unit == nullptr) || !metalMgr->HasMetalSpots()
+		|| !metalMgr->IsInitialized() || metalMgr->IsClusterizing())
+	{
+		return -1;
+	}
+
+	const int frame = circuit->GetLastFrame();
+	std::vector<CCircuitDef*> mexDefs;
+	for (CCircuitDef* mDef : metalDefs.GetBuildDefs(unit->GetCircuitDef())) {
+		if (mDef->IsAvailable(frame)) {
+			mexDefs.push_back(mDef);
+		}
+	}
+	if (mexDefs.empty()) {
+		return -1;
+	}
+
+	// CanReachAtSafe reads whichever threat layer was selected last. The builder
+	// manager sets it before its own picks; nothing does on the script path.
+	circuit->GetThreatMap()->SetThreatType(unit);
+
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const CMetalData::Metals& spots = metalMgr->GetSpots();
+	CMap* map = circuit->GetMap();
+	CMetalData::PointPredicate predicate = [this, &spots, map, &mexDefs, terrainMgr, unit](int index) {
+		const AIFloat3& p = spots[index].position;
+		if (IsAllyOpenMexSpot(index) && !terrainMgr->IsZoneAlly(p)
+			&& terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance()))
+		{
+			for (CCircuitDef* mDef : mexDefs) {
+				if (terrainMgr->CanBeBuiltAt(mDef, p)
+					&& map->IsPossibleToBuildAt(mDef->GetDef(), p, UNIT_NO_FACING))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	return metalMgr->GetSpotToBuild(pos, predicate);
+}
+
+AIFloat3 CEconomyManager::GetMexSpotPos(int spotId) const
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	if (!metalMgr->IsValidSpot(spotId)) {
+		return -RgtVector;
+	}
+	return metalMgr->GetSpots()[spotId].position;
+}
+
+IBuilderTask* CEconomyManager::EnqueueMexAt(CCircuitUnit* unit, int spotId)
+{
+	CMetalManager* metalMgr = circuit->GetMetalManager();
+	if ((unit == nullptr) || !metalMgr->IsValidSpot(spotId) || !IsAllyOpenMexSpot(spotId)) {
+		return nullptr;
+	}
+
+	const AIFloat3& pos = metalMgr->GetSpots()[spotId].position;
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CMap* map = circuit->GetMap();
+	const int frame = circuit->GetLastFrame();
+	CCircuitDef* mexDef = nullptr;
+	for (CCircuitDef* mDef : metalDefs.GetBuildDefs(unit->GetCircuitDef())) {
+		if (mDef->IsAvailable(frame) && terrainMgr->CanBeBuiltAt(mDef, pos)
+			&& map->IsPossibleToBuildAt(mDef->GetDef(), pos, UNIT_NO_FACING))
+		{
+			mexDef = mDef;
+			break;
+		}
+	}
+	if (mexDef == nullptr) {
+		return nullptr;
+	}
+	return circuit->GetBuilderManager()->Enqueue(TaskB::Spot(IBuilderTask::BuildType::MEX,
+			IBuilderTask::Priority::HIGH, mexDef, pos, spotId));
 }
 
 bool CEconomyManager::IsIgnorePull(const IBuilderTask* task) const
@@ -1026,6 +1133,13 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 		return nullptr;
 	}
 
+	// NOTE: do not "improve" this by letting mex upgrades pre-empt the stall.
+	// Tried exactly that -- on the reasoning that a 4x extractor is a better
+	// answer than another solar -- and it lost 1-7. The short-circuit is load
+	// bearing: skipping it means the stall is never fixed, and an upgrade needs
+	// energy to build, so the AI stalls out with upgrades queued and no power to
+	// run them. The mex/energy ordering is not the reason the tech lead fails to
+	// snowball.
 	if (IsEnergyStalling()) {
 		return UpdateEnergyTasks(position, unit);
 	}
@@ -1214,7 +1328,17 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 			}
 		}
 		float reclaimValue = featDef->GetContainedResource(metalRes)/* * feature->GetReclaimLeft()*/;
+		// apexearth: "do not reclaim for energy if we are >20% energy" -- watching
+		// constructors chew trees while the enemy took the map. A tree is an
+		// ENERGY feature; above this bank it is not worth a constructor-second,
+		// and constructor time is what buys mexes.
+		const float energyFeat = featDef->GetContainedResource(energyRes);
 		delete featDef;
+		const float eStore = GetEnergyStore();
+		const float eFrac = (eStore > 0.f) ? (GetEnergyCur() / eStore) : 0.f;
+		if ((energyFeat > reclaimValue) && (eFrac > RECLAIM_ENERGY_MAX)) {
+			continue;
+		}
 		if (reclaimValue < 1.0f) {
 			continue;
 		}
@@ -1278,6 +1402,29 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 	const int frame = circuit->GetLastFrame();
 	float bestResDist = std::numeric_limits<float>::max();
 
+	// The default energy condition is GetCostE() * costRatio, which for a fusion
+	// demands more energy income than the fusion itself produces (corfus: 1300
+	// required against ~1000 made) -- so the reason to build one disqualifies it.
+	// The metal is the real commitment: corfus is 4500 metal against 26,000
+	// energy spread over a 75,400 buildtime, i.e. tens of e/s of actual drain.
+	//
+	// It cannot simply be lowered. Only a few energy tasks are allowed at once
+	// (taskSize below), so an early fusion blocks all other energy for the
+	// minutes it takes to finish; dropping this bar to a flat 300 halved metal
+	// production and killed the AI at 28 minutes. So relax it with game time
+	// instead: unchanged early, when the economy cannot carry the bet, and low
+	// later, when build power finishes it quickly and the energy is genuinely
+	// needed. apexearth: "diminishing requirements over time perhaps may help".
+	const int gateSec = frame / FRAMES_PER_SEC;
+	float engyGate = 1.f;
+	if (gateSec >= ENERGY_GATE_LOW_SEC) {
+		engyGate = ENERGY_GATE_FLOOR;
+	} else if (gateSec > ENERGY_GATE_FULL_SEC) {
+		const float t = float(gateSec - ENERGY_GATE_FULL_SEC)
+				/ float(ENERGY_GATE_LOW_SEC - ENERGY_GATE_FULL_SEC);
+		engyGate = 1.f - t * (1.f - ENERGY_GATE_FLOOR);
+	}
+
 	const auto& infos = energyDefs.GetInfos();
 	const float curWind = circuit->GetMap()->GetCurWind();
 	auto checkWind = [curWind, terrainMgr, position, metalIncome, energyIncome, &infos](unsigned i) {
@@ -1308,12 +1455,12 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 				if (engy.cdef->IsWind() && !checkWind(i)) {
 					continue;
 				}
-				if ((engy.data.cond.metalIncome < metalIncome) && (engy.data.cond.energyIncome < energyIncome)) {
+				if ((engy.data.cond.metalIncome < metalIncome) && (engy.data.cond.energyIncome * engyGate < energyIncome)) {
 					bestDef = engy.cdef;
 					break;
 				} else {
 					const float resDist = ((engy.data.cond.metalIncome < metalIncome) ? 0.f : (engy.data.cond.metalIncome - metalIncome))
-							+ ((engy.data.cond.energyIncome < energyIncome) ? 0.f : GetEcoEM() * (engy.data.cond.energyIncome - energyIncome));
+							+ ((engy.data.cond.energyIncome * engyGate < energyIncome) ? 0.f : GetEcoEM() * (engy.data.cond.energyIncome * engyGate - energyIncome));
 					if (bestResDist > resDist) {
 						bestResDist = resDist;
 						bestDef = engy.cdef;
@@ -1571,6 +1718,19 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		}
 	}
 
+	// GetBuildPosition above snaps to a sector centre chosen for reprDef, the
+	// factory's MOBILE representative; the test below is against facDef's
+	// IMMOBILE type. The two accept different sectors, so the snapped site can
+	// fail it. Without this the task is discarded and nothing is ever placed.
+	if (!factoryTask->IsPlop() && (factoryTask->GetFacing() == UNIT_NO_FACING)
+		&& !terrainMgr->CanBeBuiltAtSafe(facDef, buildPos))
+	{
+		const AIFloat3& homePos = circuit->GetSetupManager()->GetBasePos();
+		if (terrainMgr->CanBeBuiltAtSafe(facDef, homePos)) {
+			buildPos = homePos;
+		}
+	}
+
 	factoryTask->SetPosition(buildPos);
 
 	if (factoryTask->IsPlop()
@@ -1589,6 +1749,12 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 		factoryTask = nullptr;
 		return task;
 	} else {
+		// CBFactoryTask's ctor calls CFactoryData::AddFactory; only Cancel() undoes
+		// it, and a bare delete does not call Cancel. allFactories[].count is the
+		// primary sort key in CFactoryData::GetFactoryToBuild, so each discard here
+		// permanently demotes that factory in every later choice. Cancel() is
+		// protected, so undo the count directly.
+		factoryMgr->DelFactory(facDef);
 		delete factoryTask;
 		factoryTask = nullptr;
 	}

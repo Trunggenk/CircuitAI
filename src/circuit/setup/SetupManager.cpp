@@ -328,6 +328,11 @@ CAllyTeam* CSetupManager::GetAllyTeam() const
 	return setupData->GetAllyTeam(circuit->GetAllyTeamId());
 }
 
+int CSetupManager::FindAllyTeamOf(int teamId) const
+{
+	return setupData->FindAllyTeamOf(teamId);
+}
+
 void CSetupManager::ReadConfig()
 {
 	const Json::Value& root = GetConfig();

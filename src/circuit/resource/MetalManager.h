@@ -34,6 +34,9 @@ public:
 	bool HasMetalSpots() const { return (metalData->IsInitialized() && !metalData->IsEmpty()); }
 	bool HasMetalClusters() const { return !metalData->GetClusters().empty(); }
 	bool IsClusterizing() const { return metalData->IsClusterizing(); }
+	// Init() is deferred via RunOnInit; GetSpotToBuild/Upgrade dereference
+	// members it creates.
+	bool IsInitialized() const { return shortPath != nullptr; }
 
 	void ClusterizeMetal(CCircuitDef* commDef);
 	void SetAuthority(CCircuitAI* authority) { circuit = authority; }
@@ -66,7 +69,8 @@ public:
 public:
 	void SetOpenSpot(int index, bool value);
 	void SetOpenSpot(const springai::AIFloat3& pos, bool value);
-	bool IsOpenSpot(int index) const { return metalInfos[index].isOpen; }
+	bool IsValidSpot(int index) const { return (index >= 0) && ((size_t)index < metalInfos.size()); }
+	bool IsOpenSpot(int index) const { return IsValidSpot(index) && metalInfos[index].isOpen; }
 	bool IsOpenSpot(const springai::AIFloat3& pos) const;
 	void MarkAllyMexes();
 	void MarkAllyMexes(const std::vector<CAllyUnit*>& mexes);
@@ -78,7 +82,7 @@ public:
 		return clusterInfos[index].queuedCount >= GetClusters()[index].idxSpots.size();
 	}
 	bool IsMexInFinished(int index) const;
-	int GetCluster(int index) const { return metalInfos[index].clusterId; }
+	int GetCluster(int index) const { return IsValidSpot(index) ? metalInfos[index].clusterId : -1; }
 
 	int GetSpotToBuild(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate);
 	int GetSpotToUpgrade(const springai::AIFloat3& pos, CMetalData::PointPredicate& predicate);

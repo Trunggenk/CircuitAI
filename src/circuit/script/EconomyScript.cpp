@@ -8,12 +8,29 @@
 #include "script/EconomyScript.h"
 #include "script/ScriptManager.h"
 #include "module/EconomyManager.h"
+#include "task/builder/BuilderTask.h"
+#include "unit/CircuitUnit.h"
 #include "util/Utils.h"
 #include "angelscript/include/angelscript.h"
 
 namespace circuit {
 
 using namespace springai;
+
+static int CEconomyManager_FindOpenMexSpot(CEconomyManager* mgr, CCircuitUnit* unit, const AIFloat3& pos)
+{
+	return mgr->FindOpenMexSpot(unit, pos);
+}
+
+static AIFloat3 CEconomyManager_GetMexSpotPos(CEconomyManager* mgr, int spotId)
+{
+	return mgr->GetMexSpotPos(spotId);
+}
+
+static IUnitTask* CEconomyManager_EnqueueMexAt(CEconomyManager* mgr, CCircuitUnit* unit, int spotId)
+{
+	return mgr->EnqueueMexAt(unit, spotId);
+}
 
 CEconomyScript::CEconomyScript(CScriptManager* scr, CEconomyManager* mgr)
 		: IModuleScript(scr, mgr)
@@ -40,6 +57,12 @@ CEconomyScript::CEconomyScript(CScriptManager* scr, CEconomyManager* mgr)
 	r = engine->RegisterObjectProperty("CEconomyManager", "float reclEnergyEff", asOFFSET(CEconomyManager, reclEnergyEff)); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CEconomyManager", "float GetMetalMake(const CCircuitDef@) const", asMETHOD(CEconomyManager, GetMetalMake), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CEconomyManager", "float GetEnergyMake(const CCircuitDef@) const", asMETHOD(CEconomyManager, GetEnergyMake), asCALL_THISCALL); ASSERT(r >= 0);
+	// apex: mex spots, addressable from script. EnqueueMexAt is the only way to
+	// build a MEX task carrying a real spotId -- a hand-built SBuildTask is POD
+	// and zero-inits, so a forgotten spotId silently means spot 0.
+	r = engine->RegisterObjectMethod("CEconomyManager", "int FindOpenMexSpot(CCircuitUnit@, const AIFloat3& in)", asFUNCTION(CEconomyManager_FindOpenMexSpot), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CEconomyManager", "AIFloat3 GetMexSpotPos(int) const", asFUNCTION(CEconomyManager_GetMexSpotPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CEconomyManager", "IUnitTask@+ EnqueueMexAt(CCircuitUnit@, int)", asFUNCTION(CEconomyManager_EnqueueMexAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 }
 
 CEconomyScript::~CEconomyScript()

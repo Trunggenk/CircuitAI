@@ -62,10 +62,12 @@ public:
 
 	std::shared_ptr<IPathQuery> CreatePathSingleQuery(CCircuitUnit* unit, CThreatMap* threatMap,
 			const springai::AIFloat3& startPos, const springai::AIFloat3& endPos, float maxRange,
-			NSMicroPather::HitFunc&& hitTest = nullptr, float maxThreat = std::numeric_limits<float>::max(), bool endPosOnly = false);
+			NSMicroPather::HitFunc&& hitTest = nullptr, float maxThreat = std::numeric_limits<float>::max(), bool endPosOnly = false,
+			float threatMod = 1.f);
 	std::shared_ptr<IPathQuery> CreatePathMultiQuery(CCircuitUnit* unit, CThreatMap* threatMap,
 			const springai::AIFloat3& startPos, float maxRange, const F3Vec& possibleTargets,
-			NSMicroPather::HitFunc&& hitTest = nullptr, bool withGoal = false, float maxThreat = std::numeric_limits<float>::max(), bool endPosOnly = false);
+			NSMicroPather::HitFunc&& hitTest = nullptr, bool withGoal = false, float maxThreat = std::numeric_limits<float>::max(), bool endPosOnly = false,
+			float threatMod = 1.f);
 	std::shared_ptr<IPathQuery> CreatePathWideQuery(CCircuitUnit* unit, const CCircuitDef* cdef,
 			const springai::AIFloat3& startPos, const springai::AIFloat3& endPos, const IndexVec& targets);
 	std::shared_ptr<IPathQuery> CreateCostMapQuery(CCircuitUnit* unit, CThreatMap* threatMap,
@@ -97,9 +99,12 @@ private:
 	MoveType GetMoveType(CCircuitUnit* unit, float elevation) const;
 	MoveType GetMoveType(const CCircuitDef* cdef, float elevation) const;
 	NSMicroPather::CostFunc GetMoveFun(MoveType mt, const CCircuitDef* cdef, float*& outMoveArray) const;
-	NSMicroPather::CostFunc GetThreatFun(MoveType mt, const CCircuitDef* cdef, CThreatMap* threatMap, float*& outThreatArray) const;
+	// threatMod scales the per-move-type threat cost. 1.0 leaves it as it was.
+	// Raising it buys a longer route with quieter ground, which is what makes an
+	// attack go round rather than straight up the middle.
+	NSMicroPather::CostFunc GetThreatFun(MoveType mt, const CCircuitDef* cdef, CThreatMap* threatMap, float*& outThreatArray, float threatMod = 1.f) const;
 	void FillMapData(IPathQuery* query, CCircuitUnit* unit, const CCircuitDef* cdef, float elevation);
-	void FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, float elevation);
+	void FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, float elevation, float threatMod = 1.f);
 
 	void RunPathSingle(CScheduler* scheduler, const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);
 	void RunPathMulti(CScheduler* scheduler, const std::shared_ptr<IPathQuery>& query, PathCallback&& onComplete = nullptr);

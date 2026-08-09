@@ -147,7 +147,18 @@ void CBFactoryTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, fl
 		return;
 	}
 	facing = opposite[facing];
-	checkFacing();
+	if (checkFacing()) {
+		return;
+	}
+
+	// All four facings failed: there is genuinely nowhere here to put this.
+	// Only reported for LARGE footprints -- an ordinary lab failing to place is
+	// usually a bad search origin, whereas a gantry-sized building failing is
+	// what a base packed with old T1 clutter looks like. The script decides
+	// whether anything nearby is worth clearing; see CCircuitAI::NoteBuildBlocked.
+	if (testSize >= SQUARE_SIZE * 8) {
+		circuit->NoteBuildBlocked(pos);
+	}
 }
 
 #define SERIALIZE(stream, func)	\

@@ -149,6 +149,116 @@ private:
 	void DeleteTeamUnit(CCircuitUnit* unit);
 public:
 	void GiveUnits(std::vector<CCircuitUnit*>&& units, int newTeamId);
+	// apex: send metal/energy to an allied team. The engine command has always
+	// existed (COMMAND_SEND_RESOURCES) and CircuitAI already uses it when
+	// resigning, but it was never reachable from AngelScript -- so a team of
+	// AIs had no way to pool resources behind one player. Enables "slinging":
+	// feed one commander so it reaches T2 far sooner than four independent
+	// economies would.
+	void SendResources(float metal, float energy, int toTeamId);
+	// How full another team's metal storage is, 0..1. Needed so a feeder can
+	// tell whether the player it is slinging to actually needs the metal --
+	// sending to someone already near cap just wastes it.
+	float GetTeamMetalFill(int otherTeamId) const;
+	float GetTeamMetalIncome(int otherTeamId) const;
+
+	// --- in-process team coordination -----------------------------------
+	// Every AI the host adds lives in ONE process (AIExport.cpp keeps them in
+	// `myAIs`, and CGameAttribute::GetCircuits() hands out the live set), so
+	// instances can read each other directly. That matters because the only
+	// other channel -- game rules params published by a synced gadget -- cannot
+	// ship to a multiplayer game: synced Lua must exist on every client.
+	// These replace that channel. Policy stays in AngelScript; C++ supplies only
+	// the facts a script cannot otherwise reach.
+
+	// Highest build progress among OUR units of `def`, 0..1, or -1 when we own
+	// none. Counts nanoframes, which is the point: the tech lead is whoever has
+	// committed to an advanced plant, not whoever has finished one.
+	float GetDefBuildProgress(CCircuitDef* def) const;
+	// Shared blackboard, keyed (teamId, key), written under our own teamId.
+	// Plain floats, and they never leave this process.
+	void PublishTeamValue(const std::string& key, float value);
+	float ReadTeamValue(int otherTeamId, const std::string& key, float defVal) const;
+	springai::AIFloat3 GetBestWreckPos(const springai::AIFloat3& pos, float radius, float minMetal);
+	float GetWreckValueAt(const springai::AIFloat3& pos, float radius);
+	bool IsCommanderWreck(springai::Feature* f);
+	// Recent kills/losses by metal value; see NoteTrade in the .cpp.
+	void NoteTrade(bool isKill, CCircuitDef* cdef);
+	// WHERE we are losing units, as a cost-weighted decaying centroid. The AI
+	// had no location for incoming attacks at all -- ApproachThreat() is a
+	// global scalar -- so defence was placed by geometry alone.
+	void NoteLossAt(const springai::AIFloat3& pos, float costM);
+	bool GetAttackHotspot(springai::AIFloat3& outPos, float& outWeight);
+	// BWEM chokepoints. Computed every game by CGridAnalyzer and, until now,
+	// reachable from nowhere: DefenceData pushes them into defPoints but every
+	// consumer selects via GetDefIndices(cluster), which only ever indexes the
+	// metal-cluster points, and the search-tree path that could reach them is
+	// commented out behind a FIXME.
+	int GetChokePointCount() const;
+	springai::AIFloat3 GetChokePointPos(int idx) const;
+	// Width of the gap, i.e. |end1 - end2|. CChokePoint keeps this as a private
+	// `size`; only IsSmall() (< 300) is public, so recompute from the ends.
+	float GetChokePointWidth(int idx) const;
+	bool GetChokePointEnds(int idx, springai::AIFloat3& outEnd1, springai::AIFloat3& outEnd2) const;
+	// The two areas this chokepoint joins; -1 if absent.
+	int GetChokePointArea(int idx, int which) const;
+	// Influence at a position. CInfluenceMap::PosToXZ does NO bounds checking --
+	// it indexes enemyInfl[z * width + x] straight from the raw position, the
+	// same unchecked pattern that made GetBuilderThreatAt kill the engine at
+	// frame 3 on an off-map read. These guard; the raw ones must never be bound.
+	bool IsPosOnMap(const springai::AIFloat3& pos) const;
+	// The front line, handed down from script. Army positions were selected
+	// exclusively from metal-cluster defPoints, so squads had no position that
+	// meant "the line" and orbited bases instead of holding ground.
+	void SetFrontPos(const springai::AIFloat3& pos) { frontPos = pos; }
+	const springai::AIFloat3& GetFrontPos() const { return frontPos; }
+	bool HasFrontPos() const { return frontPos.x >= 0.f; }
+	// The base layout, handed down from script the same way the front line is.
+	//
+	// Every structure placement was a position plus a shake radius, and Execute
+	// jittered the position anywhere inside that radius before searching. There
+	// was no footprint, no rows and no lanes, so the radius could only trade
+	// sprawl against self-walling. Script owns the frame; this snaps to it.
+	void SetBaseGrid(const springai::AIFloat3& anchor, const springai::AIFloat3& fwd,
+			float cell, float lanePitch, float laneHalf, float range);
+	bool SnapToBaseGrid(const springai::AIFloat3& pos, springai::AIFloat3& outPos) const;
+	// In-game map markers, for watching what the AI believes. These are ordinary
+	// map points/lines: allies and spectators see them, so anything using these
+	// must stay off by default outside a debug watch.
+	void DrawPoint(const springai::AIFloat3& pos, const std::string& label);
+	void DrawLine(const springai::AIFloat3& from, const springai::AIFloat3& to);
+	void DrawErase(const springai::AIFloat3& pos);
+	float GetAllyInflAt(const springai::AIFloat3& pos) const;
+	float GetEnemyInflAt(const springai::AIFloat3& pos) const;
+	float GetNetInflAt(const springai::AIFloat3& pos) const;
+	float GetRecentTradeRatio();
+	// Multiplier on the engage margin, set from AngelScript. 1.0 = unchanged.
+	// Below 1 the AI accepts worse odds; this is how a coordinated team push
+	// is expressed, since the margin itself lives in C++.
+	void SetEngageBoost(float v) { engageBoost = (v > 0.05f) ? v : 0.05f; }
+	float GetEngageBoost() const { return engageBoost; }
+	// Committed: the team is punching through a line and units must NOT peel off
+	// to heal or regroup. apexearth: "they need to commit AND be successful...
+	// if we back off we certainly won't succeed." Read by IFighterTask's retreat
+	// check. Kept as a plain strategic flag rather than a per-unit override so
+	// script can express "we are all-in now" in one call.
+	// A position `def` can ACTUALLY be built on, near `pos`, or -RgtVector.
+	// Script defence positions come from raw geometry and 9 of 10 defence tasks
+	// died having never resolved a build site; this lets the script ask the
+	// engine the same question CBFactoryTask asks, before enqueuing.
+	springai::AIFloat3 FindBuildSiteNear(CCircuitDef* def, const springai::AIFloat3& pos, float radius);
+	void SetCommitted(bool v) { isCommitted = v; }
+	bool IsCommitted() const { return isCommitted; }
+	// A large building could not be placed. Reported, not acted on: what to
+	// clear out of the way is a policy question and lives in AngelScript.
+	void NoteBuildBlocked(const springai::AIFloat3& pos);
+	bool GetBlockedBuildPos(springai::AIFloat3& outPos);
+	// Our own units of `def` within radius of pos. The script can see a def's
+	// count but has no way to reach the instances.
+	std::vector<CCircuitUnit*> GetOwnUnitsOfDef(CCircuitDef* def, const springai::AIFloat3& pos, float radius);
+	float GetEnemyCostAt(const springai::AIFloat3& pos, float radius) const;
+	float GetBuilderThreatAt(const springai::AIFloat3& pos) const;
+	float GetUnitThreatAt(CCircuitUnit* unit, const springai::AIFloat3& pos) const;
 	void Garbage(CCircuitUnit* unit, const char* reason);
 	CCircuitUnit* GetTeamUnit(ICoreUnit::Id unitId) const;
 	const Units& GetTeamUnits() const { return teamUnits; }
@@ -204,6 +314,37 @@ private:
 	bool isCommMerge;
 	bool isAllyBaseAvoid;
 // <<< AIOptions.lua ---- END
+
+// >>> Recent trade record ---- BEGIN
+private:
+	#define TRADE_DECAY_PERIOD	(FRAMES_PER_SEC * 30)
+	#define TRADE_DECAY			0.75f   // ~2 min half-life at the period above
+	#define TRADE_MIN_SAMPLE	600.f   // metal traded before the ratio means anything
+	float tradeKilled = .0f;
+	float tradeLost = .0f;
+	int tradeDecayFrame = 0;
+	// Where a large building last failed to find a site, and when. Expires so
+	// the script never acts on a stale report.
+	#define BLOCKED_BUILD_TTL	(FRAMES_PER_SEC * 30)
+	springai::AIFloat3 blockedBuildPos = -RgtVector;
+	int blockedBuildFrame = -1000000;
+	float engageBoost = 1.f;
+	springai::AIFloat3 frontPos = -RgtVector;
+	// Base grid, published by script. cell <= 0 means "no grid yet".
+	springai::AIFloat3 gridAnchor = -RgtVector;
+	springai::AIFloat3 gridFwd = ZeroVector;
+	float gridCell = .0f;
+	float gridLanePitch = .0f;
+	float gridLaneHalf = .0f;
+	float gridRange = .0f;
+	#define HOT_DECAY_PERIOD	(FRAMES_PER_SEC * 20)
+	#define HOT_DECAY			0.80f   // ~1 min half-life
+	#define HOT_MIN_WEIGHT		250.f   // metal lost before the spot means anything
+	springai::AIFloat3 hotSum = ZeroVector;   // cost-weighted position sum
+	float hotWeight = .0f;
+	int hotDecayFrame = 0;
+	bool isCommitted = false;
+// <<< Recent trade record ---- END
 
 // >>> UnitDefs ---- BEGIN
 public:

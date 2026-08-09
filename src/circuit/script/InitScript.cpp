@@ -195,6 +195,130 @@ static void CCircuitAI_GiveUnits(CCircuitAI* circuit, const CScriptArray* array,
 	circuit->GiveUnits(std::move(units), newTeamId);
 }
 
+static void CCircuitUnit_CmdMoveTo(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	unit->CmdMoveTo(pos);
+}
+
+static void CCircuitUnit_CmdRepeat(CCircuitUnit* unit, bool repeat)
+{
+	unit->CmdRepeat(repeat);
+}
+
+static AIFloat3 CEnemyManager_GetEnemyPos(CEnemyManager* mgr)
+{
+	return mgr->GetEnemyPos();
+}
+
+static float CCircuitAI_GetUnitThreatAt(CCircuitAI* circuit, CCircuitUnit* unit, const AIFloat3& pos)
+{
+	return circuit->GetUnitThreatAt(unit, pos);
+}
+
+static float CCircuitAI_GetBuilderThreatAt(CCircuitAI* circuit, const AIFloat3& pos)
+{
+	return circuit->GetBuilderThreatAt(pos);
+}
+
+static float CCircuitAI_GetEnemyCostAt(CCircuitAI* circuit, const AIFloat3& pos, float radius)
+{
+	return circuit->GetEnemyCostAt(pos, radius);
+}
+
+static float CCircuitAI_GetWreckValueAt(CCircuitAI* circuit, const AIFloat3& pos, float radius)
+{
+	return circuit->GetWreckValueAt(pos, radius);
+}
+
+static AIFloat3 CCircuitAI_GetBestWreckPos(CCircuitAI* circuit, const AIFloat3& pos, float radius, float minMetal)
+{
+	return circuit->GetBestWreckPos(pos, radius, minMetal);
+}
+
+static AIFloat3 CCircuitAI_FindBuildSiteNear(CCircuitAI* circuit, CCircuitDef* def,
+		const AIFloat3& pos, float radius)
+{
+	return circuit->FindBuildSiteNear(def, pos, radius);
+}
+
+static void CCircuitAI_SetBaseGrid(CCircuitAI* circuit, const AIFloat3& anchor,
+		const AIFloat3& fwd, float cell, float lanePitch, float laneHalf, float range)
+{
+	circuit->SetBaseGrid(anchor, fwd, cell, lanePitch, laneHalf, range);
+}
+
+static AIFloat3 CSetupManager_GetBasePos(CSetupManager* mgr)
+{
+	return mgr->GetBasePos();
+}
+
+static AIFloat3 CSetupManager_GetLanePos(CSetupManager* mgr)
+{
+	return mgr->GetLanePos();
+}
+
+static AIFloat3 CCircuitAI_GetChokePointPos(CCircuitAI* circuit, int idx)
+{
+	return circuit->GetChokePointPos(idx);
+}
+
+static bool CCircuitAI_GetChokePointEnds(CCircuitAI* circuit, int idx, AIFloat3& outEnd1, AIFloat3& outEnd2)
+{
+	return circuit->GetChokePointEnds(idx, outEnd1, outEnd2);
+}
+
+static bool CCircuitAI_GetAttackHotspot(CCircuitAI* circuit, AIFloat3& outPos, float& outWeight)
+{
+	return circuit->GetAttackHotspot(outPos, outWeight);
+}
+
+static bool CCircuitAI_GetBlockedBuildPos(CCircuitAI* circuit, AIFloat3& outPos)
+{
+	return circuit->GetBlockedBuildPos(outPos);
+}
+
+static CScriptArray* CCircuitAI_GetOwnUnitsOfDef(CCircuitAI* circuit, CCircuitDef* def,
+		const AIFloat3& pos, float radius)
+{
+	const std::vector<CCircuitUnit*> found = circuit->GetOwnUnitsOfDef(def, pos, radius);
+	CScriptArray* arr = CScriptArray::Create(gUnitArrayType, found.size());
+	asUINT i = 0;
+	for (CCircuitUnit* unit : found) {
+		arr->SetValue(i++, &unit);
+	}
+	return arr;
+}
+
+static float CCircuitAI_GetTeamMetalIncome(CCircuitAI* circuit, int otherTeamId)
+{
+	return circuit->GetTeamMetalIncome(otherTeamId);
+}
+
+static float CCircuitAI_GetTeamMetalFill(CCircuitAI* circuit, int otherTeamId)
+{
+	return circuit->GetTeamMetalFill(otherTeamId);
+}
+
+static float CCircuitAI_GetDefBuildProgress(CCircuitAI* circuit, CCircuitDef* def)
+{
+	return circuit->GetDefBuildProgress(def);
+}
+
+static void CCircuitAI_PublishTeamValue(CCircuitAI* circuit, const std::string& key, float value)
+{
+	circuit->PublishTeamValue(key, value);
+}
+
+static float CCircuitAI_ReadTeamValue(CCircuitAI* circuit, int otherTeamId, const std::string& key, float defVal)
+{
+	return circuit->ReadTeamValue(otherTeamId, key, defVal);
+}
+
+static void CCircuitAI_SendResources(CCircuitAI* circuit, float metal, float energy, int toTeamId)
+{
+	circuit->SendResources(metal, energy, toTeamId);
+}
+
 static std::string CCircuitAI_CallRules(CCircuitAI* circuit, const std::string& data)
 {
 	return circuit->GetLua()->CallRules(data.c_str(), data.size());
@@ -499,6 +623,41 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	gIdArrayType = engine->GetTypeInfoByDecl("array<Id>");
 	r = engine->RegisterObjectMethod("CCircuitAI", "array<Id>@ GetTeamIds() const", asFUNCTION(CCircuitAI_GetTeamIds), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "void GiveUnits(const array<CCircuitUnit@>@+, int)", asFUNCTION(CCircuitAI_GiveUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void SendResources(float, float, int)", asFUNCTION(CCircuitAI_SendResources), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetTeamMetalFill(int) const", asFUNCTION(CCircuitAI_GetTeamMetalFill), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetTeamMetalIncome(int) const", asFUNCTION(CCircuitAI_GetTeamMetalIncome), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// In-process team coordination, replacing the synced-gadget rules params.
+	// A hosted multiplayer game cannot carry synced Lua, but every AI the host
+	// adds shares this process, so they can simply read each other.
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetDefBuildProgress(CCircuitDef@) const", asFUNCTION(CCircuitAI_GetDefBuildProgress), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void PublishTeamValue(const string& in, float)", asFUNCTION(CCircuitAI_PublishTeamValue), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float ReadTeamValue(int, const string& in, float) const", asFUNCTION(CCircuitAI_ReadTeamValue), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "AIFloat3 GetBestWreckPos(const AIFloat3& in, float, float) const", asFUNCTION(CCircuitAI_GetBestWreckPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetWreckValueAt(const AIFloat3& in, float) const", asFUNCTION(CCircuitAI_GetWreckValueAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "bool GetBlockedBuildPos(AIFloat3& out)", asFUNCTION(CCircuitAI_GetBlockedBuildPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void SetEngageBoost(float)", asMETHOD(CCircuitAI, SetEngageBoost), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void SetCommitted(bool)", asMETHOD(CCircuitAI, SetCommitted), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "bool GetAttackHotspot(AIFloat3& out, float& out)", asFUNCTION(CCircuitAI_GetAttackHotspot), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "int GetChokePointCount() const", asMETHOD(CCircuitAI, GetChokePointCount), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "AIFloat3 GetChokePointPos(int) const", asFUNCTION(CCircuitAI_GetChokePointPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetChokePointWidth(int) const", asMETHOD(CCircuitAI, GetChokePointWidth), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "bool GetChokePointEnds(int, AIFloat3& out, AIFloat3& out)", asFUNCTION(CCircuitAI_GetChokePointEnds), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "int GetChokePointArea(int, int) const", asMETHOD(CCircuitAI, GetChokePointArea), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void SetFrontPos(const AIFloat3& in)", asMETHOD(CCircuitAI, SetFrontPos), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void SetBaseGrid(const AIFloat3& in, const AIFloat3& in, float, float, float, float)", asFUNCTION(CCircuitAI_SetBaseGrid), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "bool IsPosOnMap(const AIFloat3& in) const",asMETHOD(CCircuitAI, IsPosOnMap), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetAllyInflAt(const AIFloat3& in) const", asMETHOD(CCircuitAI, GetAllyInflAt), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEnemyInflAt(const AIFloat3& in) const", asMETHOD(CCircuitAI, GetEnemyInflAt), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetNetInflAt(const AIFloat3& in) const", asMETHOD(CCircuitAI, GetNetInflAt), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void DrawPoint(const AIFloat3& in, const string& in)", asMETHOD(CCircuitAI, DrawPoint), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void DrawLine(const AIFloat3& in, const AIFloat3& in)", asMETHOD(CCircuitAI, DrawLine), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "void DrawErase(const AIFloat3& in)", asMETHOD(CCircuitAI, DrawErase), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "AIFloat3 FindBuildSiteNear(CCircuitDef@, const AIFloat3& in, float)", asFUNCTION(CCircuitAI_FindBuildSiteNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEngageBoost() const", asMETHOD(CCircuitAI, GetEngageBoost), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "array<CCircuitUnit@>@ GetOwnUnitsOfDef(CCircuitDef@, const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetOwnUnitsOfDef), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEnemyCostAt(const AIFloat3& in, float) const", asFUNCTION(CCircuitAI_GetEnemyCostAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetBuilderThreatAt(const AIFloat3& in) const", asFUNCTION(CCircuitAI_GetBuilderThreatAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetUnitThreatAt(CCircuitUnit@, const AIFloat3& in) const", asFUNCTION(CCircuitAI_GetUnitThreatAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "bool UnitControl(CCircuitUnit@, bool)", asMETHODPR(CCircuitAI, UnitControl, (CCircuitUnit*, bool), bool), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "bool UnitControl(Id, bool)", asMETHODPR(CCircuitAI, UnitControl, (ICoreUnit::Id, bool), bool), asCALL_THISCALL); ASSERT(r >= 0);
 	// Lua<-->AI communications [in Spring 0.83+]
@@ -564,6 +723,23 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitDef", "void SetThreatKernel(float)", asMETHOD(CCircuitDef, SetThreatKernel), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "void SetFireState(int)", asMETHOD(CCircuitDef, SetFireState), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "int GetFireState() const", asMETHOD(CCircuitDef, GetFireState), asCALL_THISCALL); ASSERT(r >= 0);
+	// CCircuitDef is owned per CCircuitAI, so this scopes to one instance --
+	// unlike behaviour.json's retreat, which applies to every player.
+	r = engine->RegisterObjectMethod("CCircuitDef", "void SetRetreat(float)", asMETHOD(CCircuitDef, SetRetreat), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetRetreat() const", asMETHOD(CCircuitDef, GetRetreat), asCALL_THISCALL); ASSERT(r >= 0);
+	// Rule a def out entirely. IsAvailable() is maxThisUnit > count, so zero makes
+	// every availability check fail wherever it is asked -- factory weights, build
+	// chains, role lookups -- rather than needing each of them taught a new rule.
+	r = engine->RegisterObjectMethod("CCircuitDef", "void SetMaxThisUnit(int)", asMETHOD(CCircuitDef, SetMaxThisUnit), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "int GetMaxThisUnit() const", asMETHOD(CCircuitDef, GetMaxThisUnit), asCALL_THISCALL); ASSERT(r >= 0);
+	// Surface class, so script can ask what a unit needs water FOR. Hover is
+	// isSurfer, not isAmphibious -- CircuitDef::fillSurface carries a standing
+	// FIXME that it cannot filter hover out, and classifies it by elevation range
+	// instead: below water and high above it.
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsAmphibious() const", asMETHOD(CCircuitDef, IsAmphibious), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsFloater() const", asMETHOD(CCircuitDef, IsFloater), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsSurfer() const", asMETHOD(CCircuitDef, IsSurfer), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsSubmarine() const", asMETHOD(CCircuitDef, IsSubmarine), asCALL_THISCALL); ASSERT(r >= 0);
 
 	r = engine->RegisterObjectProperty("CCircuitUnit", "const Id id", asOFFSET(CCircuitUnit, id)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitUnit", "const CCircuitDef@ circuitDef", asOFFSET(CCircuitUnit, circuitDef)); ASSERT(r >= 0);
@@ -573,6 +749,20 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void TglAttribute(Type)", asMETHOD(CCircuitUnit, TglAttribute), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitUnit", "bool IsAttrAny(Mask) const", asMETHOD(CCircuitUnit, IsAttrAny), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void SetFireState(int)", asMETHOD(CCircuitUnit, TrySetFireState), asCALL_THISCALL); ASSERT(r >= 0);
+	// Issue a move order DIRECTLY, bypassing the task system. Expressing commander
+	// retreat as a task returned from AiMakeTask lost 0-20 with metal at 6,631:
+	// AiMakeTask is the only place the commander gets work, so substituting a
+	// retreat task substitutes for everything it would otherwise build. A raw
+	// command moves the unit without consuming its task slot.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdMoveTo(const AIFloat3& in)", asFUNCTION(CCircuitUnit_CmdMoveTo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// A factory told to repeat re-queues what it finishes, so a spam lab keeps
+	// producing instead of waiting to be handed each unit as a separate task.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdRepeat(bool)", asFUNCTION(CCircuitUnit_CmdRepeat), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// Health is the missing half of "is this risky". Threat alone said commanders
+	// die where the map reads ZERO, because the killer is often at range -- the
+	// last plasma shots landing on a commander already running. Health loss is
+	// unambiguous and fires whether the shooter is adjacent or far away.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "float GetHealthPercent()", asMETHOD(CCircuitUnit, GetHealthPercent), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void SetMoveState(int)", asMETHOD(CCircuitUnit, TrySetMoveState), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void SelfDestruct(bool)", asMETHOD(CCircuitUnit, CmdSelfD), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitUnit", "IUnitTask@ const task", asOFFSET(CCircuitUnit, task)); ASSERT(r >= 0);
@@ -585,6 +775,8 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterGlobalProperty("CSetupManager aiSetupMgr", setupMgr); ASSERT(r >= 0);
 	// AS docs / "Registering object methods" / "Composite members"
 	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CSetupManager", "AIFloat3 GetBasePos() const", asFUNCTION(CSetupManager_GetBasePos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CSetupManager", "AIFloat3 GetLanePos() const", asFUNCTION(CSetupManager_GetLanePos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 }
 
 CInitScript::~CInitScript()
@@ -703,6 +895,9 @@ void CInitScript::RegisterMgr()
 	r = engine->RegisterObjectMethod("CEnemyManager", "float GetEnemyThreat(Type) const", asMETHODPR(CEnemyManager, GetEnemyThreat, (CCircuitDef::RoleT) const, float), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CEnemyManager", "const float mobileThreat", asOFFSET(CEnemyManager, mobileThreat)); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CEnemyManager", "float GetEnemyCost(Type) const", asMETHOD(CEnemyManager, GetEnemyCost), asCALL_THISCALL); ASSERT(r >= 0);
+	// Centroid of the enemy groups we can see. Noisy by nature -- raiders in our
+	// own base pull it backwards -- so it suits a rally point, not a facing.
+	r = engine->RegisterObjectMethod("CEnemyManager", "AIFloat3 GetEnemyPos() const", asFUNCTION(CEnemyManager_GetEnemyPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CEnemyManager", "float maxAAThreat", asOFFSET(CEnemyManager, maxAAThreat)); ASSERT(r >= 0);
 
 	CThreatMap* thrMap = circuit->GetThreatMap();

@@ -39,6 +39,13 @@ public:
 	bool CanChooseStartPos() const { return false/*startPosType == CGameSetup::StartPos_ChooseInGame*/; }
 
 	CAllyTeam* GetAllyTeam(int allyTeamId) { return allyTeams[allyTeamId]; }
+
+	// game->GetMyAllyTeam() answers 0 for every AI: aiGetTeamResource()'s gate,
+	// AI_TEAM_IDS in rts/ExternalAI/SSkirmishAICallbackImpl.cpp, is declared
+	// {{-1}} and never assigned. The start script carries the real assignment
+	// and ParseSetupScript already read it, so look our own teamId up instead.
+	// Defined in the .cpp: CAllyTeam is only forward-declared here.
+	int FindAllyTeamOf(int teamId) const;
 	const utils::CRegion& GetStartBox(int boxId) { return boxes[boxId]; }
 
 	const ModOptions& GetModOptions() const { return modoptions; }

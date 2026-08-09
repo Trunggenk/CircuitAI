@@ -264,12 +264,13 @@ AIFloat3 CPathFinder::PathIndex2Pos(int index) const
 std::shared_ptr<IPathQuery> CPathFinder::CreatePathSingleQuery(
 		CCircuitUnit* unit, CThreatMap* threatMap,  // SetMapData
 		const AIFloat3& startPos, const AIFloat3& endPos, float maxRange,
-		NSMicroPather::HitFunc&& hitTest, float maxThreat, bool endPosOnly)
+		NSMicroPather::HitFunc&& hitTest, float maxThreat, bool endPosOnly,
+		float threatMod)
 {
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryPathSingle>(*this, MakeQueryId());
 	CQueryPathSingle* query = static_cast<CQueryPathSingle*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, startPos.y);
+	FillMapData(query, unit, threatMap, startPos.y, threatMod);
 	query->InitQuery(startPos, endPos, maxRange, std::move(hitTest), maxThreat, endPosOnly);
 
 	return pQuery;
@@ -278,12 +279,13 @@ std::shared_ptr<IPathQuery> CPathFinder::CreatePathSingleQuery(
 std::shared_ptr<IPathQuery> CPathFinder::CreatePathMultiQuery(
 		CCircuitUnit* unit, CThreatMap* threatMap,  // SetMapData
 		const AIFloat3& startPos, float maxRange, const F3Vec& possibleTargets,
-		NSMicroPather::HitFunc&& hitTest, bool withGoal, float maxThreat, bool endPosOnly)
+		NSMicroPather::HitFunc&& hitTest, bool withGoal, float maxThreat, bool endPosOnly,
+		float threatMod)
 {
 	std::shared_ptr<IPathQuery> pQuery = std::make_shared<CQueryPathMulti>(*this, MakeQueryId());
 	CQueryPathMulti* query = static_cast<CQueryPathMulti*>(pQuery.get());
 
-	FillMapData(query, unit, threatMap, startPos.y);
+	FillMapData(query, unit, threatMap, startPos.y, threatMod);
 	query->InitQuery(startPos, maxRange, possibleTargets, std::move(hitTest), withGoal, maxThreat, endPosOnly);
 
 	return pQuery;
@@ -468,7 +470,7 @@ CostFunc CPathFinder::GetMoveFun(MoveType mt, const CCircuitDef* cdef, float*& o
 	return moveFun;
 }
 
-CostFunc CPathFinder::GetThreatFun(MoveType mt, const CCircuitDef* cdef, CThreatMap* threatMap, float*& outThreatArray) const
+CostFunc CPathFinder::GetThreatFun(MoveType mt, const CCircuitDef* cdef, CThreatMap* threatMap, float*& outThreatArray, float threatMod) const
 {
 	float* threatArray;
 	CostFunc threatFun;
@@ -477,39 +479,39 @@ CostFunc CPathFinder::GetThreatFun(MoveType mt, const CCircuitDef* cdef, CThreat
 			threatArray = cdef->IsAbleToSwim()  // cloak doesn't work under water
 					? threatMap->GetSwimThreatArray(cdef->GetMainRole())
 					: threatMap->GetAmphThreatArray(cdef->GetMainRole());
-			threatFun = [threatArray](int index) {
-				return 2.f * threatArray[index];
+			threatFun = [threatArray, threatMod](int index) {
+				return threatMod * 2.f * threatArray[index];
 			};
 		} break;
 		case MoveType::CLOAK: {
 			threatArray = threatMap->GetCloakThreatArray();
-			threatFun = [threatArray](int index) {
-				return threatArray[index];
+			threatFun = [threatArray, threatMod](int index) {
+				return threatMod * threatArray[index];
 			};
 		} break;
 		case MoveType::AIR: {
 			threatArray = threatMap->GetAirThreatArray(cdef->GetMainRole());
-			threatFun = [threatArray](int index) {
-				return 2.f * threatArray[index];
+			threatFun = [threatArray, threatMod](int index) {
+				return threatMod * 2.f * threatArray[index];
 			};
 		} break;
 		case MoveType::SWIM: {
 			threatArray = threatMap->GetSwimThreatArray(cdef->GetMainRole());
-			threatFun = [threatArray](int index) {
-				return 2.f * threatArray[index];
+			threatFun = [threatArray, threatMod](int index) {
+				return threatMod * 2.f * threatArray[index];
 			};
 		} break;
 		case MoveType::DIVE: {
 			threatArray = threatMap->GetAmphThreatArray(cdef->GetMainRole());
-			threatFun = [threatArray](int index) {
-				return 2.f * threatArray[index];
+			threatFun = [threatArray, threatMod](int index) {
+				return threatMod * 2.f * threatArray[index];
 			};
 		} break;
 		default:
 		case MoveType::SURF: {
 			threatArray = threatMap->GetSurfThreatArray(cdef->GetMainRole());
-			threatFun = [threatArray](int index) {
-				return 2.f * threatArray[index];
+			threatFun = [threatArray, threatMod](int index) {
+				return threatMod * 2.f * threatArray[index];
 			};
 		} break;
 	}
@@ -525,13 +527,13 @@ void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, const CCirc
 	query->Init(moveArray, nullptr, std::move(moveFun), nullptr, unit);
 }
 
-void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, float elevation)
+void CPathFinder::FillMapData(IPathQuery* query, CCircuitUnit* unit, CThreatMap* threatMap, float elevation, float threatMod)
 {
 	MoveType mt = GetMoveType(unit, elevation);
 	float* moveArray;
 	float* threatArray;
 	CostFunc moveFun = GetMoveFun(mt, unit->GetCircuitDef(), moveArray);
-	CostFunc threatFun = GetThreatFun(mt, unit->GetCircuitDef(), threatMap, threatArray);
+	CostFunc threatFun = GetThreatFun(mt, unit->GetCircuitDef(), threatMap, threatArray, threatMod);
 
 	query->Init(moveArray, threatArray, std::move(moveFun), std::move(threatFun), unit);
 }

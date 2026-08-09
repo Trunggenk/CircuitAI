@@ -110,7 +110,33 @@ bool CBReclaimTask::Reevaluate(CCircuitUnit* unit)
 		const int frame = circuit->GetLastFrame();
 		const AIFloat3& pos = unit->GetPos(frame);
 		const std::vector<ICoreUnit::Id>& enemyIds = circuit->GetCallback()->GetEnemyUnitIdsIn(pos, 500.0f);
+		// Is anything here shooting? The loop below rejects an ATTACKER as a
+		// TARGET, but never asked whether one was standing next to the harmless
+		// thing it picked -- so a constructor would walk up to a wall covered by
+		// a tower and reclaim until it died. apexearth: "we should prioritize
+		// somewhat the reclaiming of enemy walls if they aren't defended"; this
+		// is the "if they aren't defended" half, and it makes the reclaim that
+		// already happens safer rather than adding anything that spends more.
+		// A vampire builder is exempt, same as below: taking defended things is
+		// the whole point of that attribute.
+		bool isDefended = false;
+		if (!unit->GetCircuitDef()->IsAttrVampire()) {
+			for (ICoreUnit::Id enemyId : enemyIds) {
+				CEnemyInfo* foe = circuit->GetEnemyInfo(enemyId);
+				if (foe == nullptr) {
+					continue;
+				}
+				CCircuitDef* fdef = foe->GetCircuitDef();
+				if ((fdef != nullptr) && fdef->IsAttacker()) {
+					isDefended = true;
+					break;
+				}
+			}
+		}
 		for (ICoreUnit::Id enemyId : enemyIds) {
+			if (isDefended) {
+				break;
+			}
 			CEnemyInfo* enemy = circuit->GetEnemyInfo(enemyId);
 			if (enemy == nullptr) {
 				continue;
