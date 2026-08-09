@@ -11,8 +11,10 @@
 #include "module/BuilderManager.h"
 #include "module/EconomyManager.h"
 #include "module/FactoryManager.h"
+#include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "setup/SetupManager.h"
+#include "unit/enemy/EnemyManager.h"
 #include "terrain/path/PathFinder.h"
 #include "terrain/path/QueryPathSingle.h"
 #include "terrain/path/QueryCostMap.h"
@@ -148,7 +150,64 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 				endPos = circuit->GetSetupManager()->GetBasePos();
 			}
 		}
+		const AIFloat3 rally = GetRallyPos(unit);
+		endPos = utils::is_valid(rally) ? rally : GetRearHaven(unit, endPos);
 		range = factoryMgr->GetAssistRange() * 0.6f + pathfinder->GetSquareSize();
+
+		// apexearth: "sometimes our retreat logic takes us into new threats.
+		// Any way we can check where we're retreating to and recompute
+		// sometimes?" GetClosestHaven picks by distance only and never
+		// re-checks threat, and neither GetRallyPos nor GetRearHaven look at
+		// enemy influence either -- a haven or rally point that fell to the
+		// enemy after it was registered stays the answer every time this is
+		// called. Start() already re-runs every other Update() tick per
+		// retreating unit (updCount toggling below), so this check gets a
+		// fresh answer on the same cadence rather than only running once at
+		// task assignment. Falls back to the base -- itself already
+		// threat-checked above -- rather than to nothing, so a rejected
+		// haven/rally never leaves endPos unvalidated.
+		if (circuit->GetInflMap()->GetEnemyInflAt(endPos) >= INFL_EPS) {
+			AIFloat3 fallback = circuit->GetSetupManager()->GetBasePos();
+			if (circuit->GetInflMap()->GetInfluenceAt(fallback) < INFL_SAFE) {
+				circuit->GetSetupManager()->FindNewBase(unit);
+				fallback = circuit->GetSetupManager()->GetBasePos();
+			}
+			endPos = fallback;
+		}
+
+		// apexearth: "when we're retreating to safe havens, it seems we
+		// clump up into a tight ball, which makes us even more likely to
+		// die... we should spread out more evenly, forming a line against
+		// the threat." Every unit on this task computes the same endPos
+		// independently and paths to that exact point -- a squad that
+		// pulled back healthy converges onto one AOE-sized spot, which is
+		// no safer than standing still once it arrives. Offset along the
+		// line perpendicular to the enemy direction, same idea as
+		// ISquadTask::Attack's row spacing, keyed by this unit's rank among
+		// the task's OTHER assignees so the line forms without any unit
+		// needing to know where the others are headed.
+		if (units.size() > 1) {
+			const AIFloat3& foe = circuit->GetEnemyManager()->GetEnemyPos();
+			AIFloat3 dir = endPos - foe;
+			const float len = dir.Length2D();
+			if (len > 1.f) {
+				const AIFloat3 perp(-dir.z / len, 0.f, dir.x / len);
+				int index = 0;
+				for (CCircuitUnit* u : units) {
+					if (u == unit) {
+						break;
+					}
+					++index;
+				}
+				const float spacing = SQUARE_SIZE * 24;
+				const float lineOffset = (index - (units.size() - 1) * 0.5f) * spacing;
+				AIFloat3 spread = endPos + perp * lineOffset;
+				CTerrainManager::CorrectPosition(spread);
+				if (circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), spread)) {
+					endPos = spread;
+				}
+			}
+		}
 	}
 
 //	const float minThreat = circuit->GetThreatMap()->GetUnitThreat(unit) * 0.125f;
@@ -160,6 +219,90 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 	pathfinder->RunQuery(circuit->GetScheduler().get(), query, [this](const IPathQuery* query) {
 		this->ApplyPath(static_cast<const CQueryPathSingle*>(query));
 	});
+}
+
+// How far behind the haven the commander is parked. Roughly a base radius, so
+// it clears the buildings the enemy is coming for without leaving the base.
+#define COMM_REAR_DIST	900.f
+
+// Where along base->lane a falling-back fighter re-forms. Our script publishes
+// the front at 0.78 of that span, so this sits behind the fighting but well
+// forward of home.
+#define RALLY_FRAC	0.55f
+
+// A fighter falls back to ONE shared point, not to whichever haven happens to
+// be nearest it. GetClosestHaven is per-unit and havens are factory positions,
+// so a retreating squad fanned out to several places at the back of the map and
+// then walked all the way forward again. apexearth, watching: "each of our
+// units, as they pull back, it looks to me like they're pulling back to
+// different locations... a perfectly healthy set of units took the long walk
+// away from the front line, and now they're walking all the way back."
+//
+// Builders and the commander are excluded: they retreat to be repaired or to
+// hide, and a rally point in front of the base serves neither.
+AIFloat3 CRetreatTask::GetRallyPos(CCircuitUnit* unit) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	if (cdef->IsRoleComm() || (circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(BUILDER))) {
+		return -RgtVector;
+	}
+
+	// Our own static defence, when there is any: a fighter that pulls out should
+	// end up beside the towers and the constructors keeping them up, not on a
+	// point interpolated along a lane that may have nothing on it.
+	const AIFloat3 stand = circuit->GetMilitaryManager()->GetDefenceStand();
+	if (utils::is_valid(stand)
+		&& circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), stand))
+	{
+		return stand;
+	}
+
+	CSetupManager* setupMgr = circuit->GetSetupManager();
+	const AIFloat3& basePos = setupMgr->GetBasePos();
+	const AIFloat3& lanePos = setupMgr->GetLanePos();
+	if (!utils::is_valid(lanePos)) {
+		return -RgtVector;
+	}
+
+	AIFloat3 rally = basePos + (lanePos - basePos) * RALLY_FRAC;
+	CTerrainManager::CorrectPosition(rally);
+	if (!circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), rally)) {
+		return -RgtVector;
+	}
+	return rally;
+}
+
+// A retreat ends at the closest haven, or at the base CENTRE when there is no
+// haven -- which is the middle of the thing the enemy is attacking. The
+// commander then sits there, cloaked, in the path of the fight, and its death
+// takes the surrounding base with it.
+//
+// Push the destination directly away from the enemy centroid instead. Only for
+// the commander: everything else retreats to be repaired, and a repair pad
+// behind the base is no use to it.
+AIFloat3 CRetreatTask::GetRearHaven(CCircuitUnit* unit, const AIFloat3& haven) const
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (!unit->GetCircuitDef()->IsRoleComm()) {
+		return haven;
+	}
+
+	const AIFloat3& foe = circuit->GetEnemyManager()->GetEnemyPos();
+	const float len = haven.distance2D(foe);
+	if (len < 1.f) {  // no enemy known yet; no direction to run in
+		return haven;
+	}
+
+	AIFloat3 rear = haven;
+	rear.x += (haven.x - foe.x) / len * COMM_REAR_DIST;
+	rear.z += (haven.z - foe.z) / len * COMM_REAR_DIST;
+	CTerrainManager::CorrectPosition(rear);
+
+	if (!circuit->GetTerrainManager()->CanMoveToPos(unit->GetArea(), rear)) {
+		return haven;  // water, cliff or off the map -- the centre beats stuck
+	}
+	return rear;
 }
 
 void CRetreatTask::Update()
@@ -230,9 +373,31 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 	if (!utils::is_valid(haven)) {
 		haven = circuit->GetSetupManager()->GetBasePos();
 	}
+	if (repairer == nullptr) {  // nobody is waiting to repair it -- re-form instead
+		const AIFloat3 rally = GetRallyPos(unit);
+		haven = utils::is_valid(rally) ? rally : GetRearHaven(unit, haven);
+	}
 
 	const float maxDist = factoryMgr->GetAssistRange();
 	const AIFloat3& unitPos = unit->GetPos(frame);
+
+	// Cloak is switched on once, when the unit finishes (CircuitAI.cpp), and
+	// nothing ever switches it off -- so a commander that reaches safety keeps
+	// paying the upkeep, which early on is a large share of income. Re-decide it
+	// here: hidden while exposed, visible and cheap once on friendly ground.
+	// Only issued on a change; IsCloaked() is the current state.
+	if (cdef->IsRoleComm() && cdef->IsAbleToCloak()) {
+		const bool isSafe = circuit->GetInflMap()->GetInfluenceAt(unitPos) >= INFL_SAFE;
+		const bool canAfford = cdef->GetCloakCost()
+				< circuit->GetEconomyManager()->GetAvgEnergyIncome() * 0.1f;
+		const bool wantCloak = !isSafe && canAfford;
+		if (wantCloak != unit->GetUnit()->IsCloaked()) {
+			TRY_UNIT(circuit, unit,
+				unit->CmdCloak(wantCloak);
+			)
+		}
+	}
+
 	if (unitPos.SqDistance2D(haven) > SQUARE(maxDist)) {
 		// TODO: push MoveAction into unit? to avoid enemy fire
 		TRY_UNIT(circuit, unit,
@@ -248,7 +413,11 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		}
 
 		// TODO: push WaitAction into unit
-		if (/*cdef->GetDef()->IsAbleToAssist() || */cdef->IsAbleToRepair()) {
+		// CmdPatrolTo below is a one-point patrol: a there-and-back shuttle
+		// that loops until something else claims the unit. Commanders are
+		// excluded -- AiMakeTask's isComm section picks them up when idle,
+		// same as GetRallyPos/GetRearHaven already carve them out here.
+		if (!cdef->IsRoleComm() && /*cdef->GetDef()->IsAbleToAssist() || */cdef->IsAbleToRepair()) {
 			AIFloat3 pos = unitPos;
 			if (unit->GetUnit()->IsCloaked()) {
 				pos += AIFloat3(SQUARE_SIZE * 2, 0, SQUARE_SIZE * 2);  // don't move, but assist if required

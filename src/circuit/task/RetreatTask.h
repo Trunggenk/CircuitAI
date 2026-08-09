@@ -43,6 +43,8 @@ public:
 	virtual void Dead();
 
 private:
+	springai::AIFloat3 GetRearHaven(CCircuitUnit* unit, const springai::AIFloat3& haven) const;
+	springai::AIFloat3 GetRallyPos(CCircuitUnit* unit) const;
 	void Recovered(CCircuitUnit* unit);
 
 	void ApplyPath(const CQueryPathSingle* query);

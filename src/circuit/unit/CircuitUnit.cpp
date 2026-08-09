@@ -290,6 +290,13 @@ void CCircuitUnit::CmdMoveTo(const AIFloat3& pos, short options, int timeout)
 //	unit->ExecuteCustomCommand(CMD_RAW_MOVE, {pos.x, pos.y, pos.z}, options, timeout);
 }
 
+// A factory set to repeat re-queues what it finishes, so it keeps producing
+// without waiting to be handed the next task.
+void CCircuitUnit::CmdRepeat(bool repeat, short options, int timeout)
+{
+	unit->SetRepeat(repeat, options, timeout);
+}
+
 void CCircuitUnit::CmdJumpTo(const AIFloat3& pos, short options, int timeout)
 {
 //	assert(utils::is_in_map(pos));
@@ -328,7 +335,21 @@ void CCircuitUnit::CmdStop(short options, int timeout)
 
 void CCircuitUnit::CmdSetTarget(CEnemyInfo* enemy)
 {
-//	unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {(float)target->GetId()});
+	// apex: ENABLED. This was an empty body, so both Attack() overloads ended by
+	// calling a no-op and the squad had only move-and-attack orders -- which walk
+	// a unit INTO its target rather than letting it shoot while manoeuvring.
+	// apexearth: "we should not give specific 'attack this unit' orders, we
+	// should move around within range of the unit and use 'set target'... that
+	// would allow us to keep moving while shooting at that enemy."
+	// Verified handled, unlike the ai_super_fire strings in SuperTask which have
+	// no listener in either game tree: BAR.sdd/modules/customcommands.lua defines
+	// UNIT_SET_TARGET = 34923, matching CMD_UNIT_SET_TARGET here, and
+	// luarules/gadgets/unit_target_on_the_move.lua registers and handles it. The
+	// gadget's name is the feature.
+	if (enemy == nullptr) {
+		return;
+	}
+	unit->ExecuteCustomCommand(CMD_UNIT_SET_TARGET, {(float)enemy->GetId()});
 }
 
 void CCircuitUnit::CmdCloak(bool state)
