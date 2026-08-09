@@ -56,6 +56,8 @@ using namespace terrain;
 CMilitaryManager::CMilitaryManager(CCircuitAI* circuit)
 		: ITaskModule(circuit, new CMilitaryScript(circuit->GetScriptManager(), this))
 		, defenceIdx(0)
+		, defStand(-RgtVector)
+		, defStandFrame(-1)
 		, isEnemyFound(false)
 		, armyCost(0.f)
 		, bigGunDef(nullptr)
@@ -144,9 +146,13 @@ void CMilitaryManager::InitHandlers()
 	 * Regular defence handlers: for units not in STOCK or SUPER but with FENCE attribute
 	 */
 	auto fenceFinishedHandler = [this](CCircuitUnit* unit) {
+		fencePos[unit] = unit->GetPos(this->circuit->GetLastFrame());
+		defStandFrame = -1;
 		UnitAdded(unit, UseAs::FENCE);
 	};
 	auto fenceDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
+		fencePos.erase(unit);
+		defStandFrame = -1;
 		UnitRemoved(unit, UseAs::FENCE);
 	};
 
@@ -300,6 +306,9 @@ void CMilitaryManager::InitHandlers()
 			if (cdef.GetDef()->GetRadarRadius() > 1.f) {
 				radarDefs.AddDef(&cdef);
 				cdef.SetIsRadar(true);
+			}
+			if (cdef.GetDef()->GetJammerRadius() > 1.f) {
+				cdef.SetIsJammer(true);
 			}
 			if (cdef.GetDef()->GetSonarRadius() > 1.f) {
 				sonarDefs.AddDef(&cdef);
@@ -582,7 +591,12 @@ int CMilitaryManager::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 	auto itgt = guardTasks.find(unit);
 	if (itgt != guardTasks.end()) {
-		AbortTask(itgt->second);
+		// Drop the entry BEFORE aborting: the abort path re-enters DequeueTask,
+		// and leaving the mapping live across that gave a second route to the
+		// same dangling pointer.
+		CFGuardTask* guard = itgt->second;
+		guardTasks.erase(itgt);
+		AbortTask(guard);
 	}
 
 	auto search = destroyedHandler.find(unit->GetCircuitDef()->GetId());
@@ -612,7 +626,14 @@ IFighterTask* CMilitaryManager::Enqueue(const TaskF::SFightTask& ti)
 			task = new CFGuardTask(this, ti.vip, 1.0f);
 		} break;
 		case IFighterTask::FightType::DEFEND: {
-			const AIFloat3& pos = circuit->GetSetupManager()->GetBasePos();
+			// The massing pool waits at this position and CDefendTask::Start sends
+			// every new assignee to it. At the base centre that is the whole army
+			// standing behind its own buildings; on the tower line it is the army
+			// standing with them.
+			AIFloat3 pos = GetDefenceStand();
+			if (!utils::is_valid(pos)) {
+				pos = circuit->GetSetupManager()->GetBasePos();
+			}
 			if (ti.check == IFighterTask::FightType::_SIZE_) {
 				const float mod = (float)rand() / RAND_MAX * defenceMod.len + defenceMod.min;
 				task = new CDefendTask(this, pos, ti.promote, ti.promote, ti.power, 1.0f / mod);
@@ -661,6 +682,34 @@ IFighterTask* CMilitaryManager::Enqueue(const TaskF::SFightTask& ti)
 	return task;
 }
 
+// apex: see the header for why this lives on the manager rather than the task.
+// SUPER_MEMORY is a little over one Armageddon reload (120s stockpile), long
+// enough that a second silo picks a different target rather than confirming the
+// first one's answer.
+#define SUPER_MEMORY	(FRAMES_PER_SEC * 150)
+
+void CMilitaryManager::NoteSuperTarget(const AIFloat3& pos, int frame)
+{
+	for (SSuperShot& shot : superShots) {
+		if (shot.frame + SUPER_MEMORY <= frame) {
+			shot.pos = pos;
+			shot.frame = frame;
+			return;
+		}
+	}
+	superShots.push_back(SSuperShot{pos, frame});
+}
+
+bool CMilitaryManager::IsRecentSuperTarget(const AIFloat3& pos, float sqRadius, int frame) const
+{
+	for (const SSuperShot& shot : superShots) {
+		if ((shot.frame + SUPER_MEMORY > frame) && (shot.pos.SqDistance2D(pos) < sqRadius)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 CRetreatTask* CMilitaryManager::EnqueueRetreat()
 {
 	CRetreatTask* task = new CRetreatTask(this);
@@ -676,7 +725,16 @@ void CMilitaryManager::DequeueTask(IUnitTask* task, bool done)
 			IFighterTask* taskF = static_cast<IFighterTask*>(task);
 			fightTasks[static_cast<IFighterTask::FT>(taskF->GetFightType())].erase(taskF);
 			if (taskF->GetFightType() == IFighterTask::FightType::GUARD) {
-				guardTasks.erase(circuit->GetTeamUnit(static_cast<CFGuardTask*>(taskF)->GetVipId()));
+				// Erase by VALUE, not by a unit lookup. GetTeamUnit() returns
+				// nullptr once the VIP has been unregistered, so erase(nullptr)
+				// removed nothing and left an entry keyed by a freed
+				// CCircuitUnit*. When the allocator reused that address for a
+				// new unit, UnitDestroyed's guardTasks.find(unit) hit the stale
+				// entry and called AbortTask on an already-deleted task --
+				// task->Dead() then dispatched through a garbage vtable.
+				for (auto it = guardTasks.begin(); it != guardTasks.end(); ) {
+					it = (it->second == taskF) ? guardTasks.erase(it) : std::next(it);
+				}
 			}
 		} break;
 		default: break;
@@ -1063,8 +1121,75 @@ void CMilitaryManager::ClearScoutPosition(IUnitTask* task)
 	scoutTasks.erase(it);
 }
 
+// A lone tower is not somewhere to make a stand, so a position only counts as
+// one once it has company. That also keeps the answer near where constructors
+// are working, since towers accumulate where they are being built.
+#define STAND_RADIUS	700.f
+#define STAND_MIN_FENCE	2u
+#define STAND_PERIOD	(FRAMES_PER_SEC * 5)
+
+bool CMilitaryManager::IsStrongpoint(const AIFloat3& pos) const
+{
+	unsigned int count = 0;
+	for (const auto& kv : fencePos) {
+		if ((pos.SqDistance2D(kv.second) < SQUARE(STAND_RADIUS))
+			&& (++count >= STAND_MIN_FENCE))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void CMilitaryManager::FillDefencePos(CCircuitUnit* unit, F3Vec& outPositions)
+{
+	outPositions.clear();
+
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	SArea* area = unit->GetArea();
+	for (const auto& kv : fencePos) {
+		if (IsStrongpoint(kv.second) && terrainMgr->CanMoveToPos(area, kv.second)) {
+			outPositions.push_back(kv.second);
+		}
+	}
+}
+
+// The one place a falling-back squad re-forms: our own static defence closest to
+// the lane, i.e. the forward end of the tower line rather than the middle of the
+// base. Invalid until two towers stand together somewhere.
+AIFloat3 CMilitaryManager::GetDefenceStand()
+{
+	const int frame = circuit->GetLastFrame();
+	if ((defStandFrame >= 0) && (frame < defStandFrame + STAND_PERIOD)) {
+		return defStand;
+	}
+	defStandFrame = frame;
+	defStand = -RgtVector;
+
+	CSetupManager* setupMgr = circuit->GetSetupManager();
+	const AIFloat3& lanePos = setupMgr->GetLanePos();
+	const AIFloat3 ref = utils::is_valid(lanePos) ? lanePos : setupMgr->GetBasePos();
+	float minSqDist = std::numeric_limits<float>::max();
+	for (const auto& kv : fencePos) {
+		const float sqDist = ref.SqDistance2D(kv.second);
+		if ((minSqDist > sqDist) && IsStrongpoint(kv.second)) {
+			minSqDist = sqDist;
+			defStand = kv.second;
+		}
+	}
+	return defStand;
+}
+
 void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 {
+	// Our own towers first. Both callers reach here because the squad found no
+	// target it could beat, which is exactly the moment it should fall back onto
+	// static defence instead of onto whichever metal cluster is nearest the lane.
+	FillDefencePos(unit, outPositions);
+	if (!outPositions.empty()) {
+		return;
+	}
+
 	outPositions.clear();
 
 	CInfluenceMap* inflMap = circuit->GetInflMap();
@@ -1094,6 +1219,16 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 void CMilitaryManager::FillAttackSafePos(CCircuitUnit* unit, F3Vec& outPositions)
 {
 	outPositions.clear();
+
+	// The FRONT first. Every position below comes from GetDefIndices(cluster),
+	// i.e. metal-cluster points only, which is why squads orbited bases and mexes
+	// and never held a line -- there was no position in the system that meant
+	// "the edge of our territory". Script computes one now; it goes in ahead of
+	// the clusters so a squad rallies on the line and falls back to clusters only
+	// when the front is still unknown.
+	if (circuit->HasFrontPos()) {
+		outPositions.push_back(circuit->GetFrontPos());
+	}
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
@@ -1148,6 +1283,16 @@ void CMilitaryManager::FillStaticSafePos(CCircuitUnit* unit, F3Vec& outPositions
 void CMilitaryManager::FillSafePos(CCircuitUnit* unit, F3Vec& outPositions)
 {
 	outPositions.clear();
+
+	// The FRONT first. Every position below comes from GetDefIndices(cluster),
+	// i.e. metal-cluster points only, which is why squads orbited bases and mexes
+	// and never held a line -- there was no position in the system that meant
+	// "the edge of our territory". Script computes one now; it goes in ahead of
+	// the clusters so a squad rallies on the line and falls back to clusters only
+	// when the front is still unknown.
+	if (circuit->HasFrontPos()) {
+		outPositions.push_back(circuit->GetFrontPos());
+	}
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const int frame = circuit->GetLastFrame();
@@ -1429,8 +1574,13 @@ void CMilitaryManager::UpdateDefence()
 		if (frame >= defElem.second) {
 			CCircuitDef* buildDef = defElem.first;
 			if (buildDef->IsAvailable(frame)) {
+				// A gun placed at the base is a gun that never shoots. Anything that
+				// shoots ground goes to the forward edge of held territory instead;
+				// AA, anti-nuke and the sensor towers stay where the value is.
+				const AIFloat3 pos = (buildDef->IsAttacker() && !buildDef->IsRoleAA() && !buildDef->IsRoleSuper())
+						? GetFrontierPos(ibd->first) : ibd->first;
 				circuit->GetBuilderManager()->Enqueue(TaskB::Common(IBuilderTask::BuildType::DEFENCE,
-						IBuilderTask::Priority::NORMAL, buildDef, ibd->first, 0.f, true, 0));
+						IBuilderTask::Priority::NORMAL, buildDef, pos, 0.f, true, 0));
 			}
 			ibd->second.pop_back();
 		}
@@ -1444,6 +1594,37 @@ void CMilitaryManager::UpdateDefence()
 		circuit->GetScheduler()->RemoveJob(defend);
 		defend = nullptr;
 	}
+}
+
+// The forward edge of the territory this side holds: of the metal clusters our
+// side has taken, the one nearest the enemy that is not inside an ally's zone.
+// Never further from the enemy than the position handed in, so it can only ever
+// move a structure forward.
+AIFloat3 CMilitaryManager::GetFrontierPos(const AIFloat3& basePos)
+{
+	CMetalManager* mm = circuit->GetMetalManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const CMetalData::Clusters& clusters = mm->GetClusters();
+	const AIFloat3 enemyPos = circuit->GetEnemyManager()->GetEnemyPos();
+
+	const AIFloat3* best = nullptr;
+	float bestDist = basePos.SqDistance2D(enemyPos);
+	for (unsigned i = 0; i < clusters.size(); ++i) {
+		const int index = (int)i;
+		if (!mm->IsClusterFinished(index) && !mm->IsClusterQueued(index)) {
+			continue;
+		}
+		const AIFloat3& pos = clusters[i].position;
+		if (terrainMgr->IsZoneAlly(pos)) {
+			continue;  // an ally's ground; DefaultMakeDefence declines these too
+		}
+		const float dist = pos.SqDistance2D(enemyPos);
+		if (dist < bestDist) {
+			bestDist = dist;
+			best = &pos;
+		}
+	}
+	return (best == nullptr) ? basePos : *best;
 }
 
 void CMilitaryManager::MakeBaseDefence(const AIFloat3& pos)
@@ -1717,9 +1898,39 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 	return task;
 }
 
+// Share of energy income the commander's cloak may consume.
+#define COMM_CLOAK_SHARE	0.1f
+
+// Cloak is switched on once when a unit finishes and nothing outside a retreat
+// task ever reconsiders it, so a commander could sit -- or walk -- cloaked with
+// an empty bank for the rest of the game. The moving cost is what bites:
+// corcom is 100 e/s standing and 1000 e/s moving, and CCircuitDef takes the max
+// of the two, so cloak is affordable only above 10,000 e/s of income.
+// apexearth: "one of our commanders is just walking back and forth while trying
+// to stay cloaked. 1000 energy to move while cloaked... He has no energy now and
+// still cloaked."
+void CMilitaryManager::UpdateCommCloak()
+{
+	CCircuitUnit* comm = circuit->GetSetupManager()->GetCommander();
+	if ((comm == nullptr) || comm->IsDead() || !comm->GetCircuitDef()->IsAbleToCloak()) {
+		return;
+	}
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	const bool canAfford = !economyMgr->IsEnergyStalling()
+			&& (comm->GetCircuitDef()->GetCloakCost()
+				< economyMgr->GetAvgEnergyIncome() * COMM_CLOAK_SHARE);
+	if (!canAfford && comm->GetUnit()->IsCloaked()) {
+		TRY_UNIT(circuit, comm,
+			comm->CmdCloak(false);
+		)
+	}
+}
+
 void CMilitaryManager::Watchdog()
 {
 	ZoneScopedN(__PRETTY_FUNCTION__);
+
+	UpdateCommCloak();
 
 	for (CCircuitUnit* unit : army) {
 		if (unit->GetTask()->GetType() == IUnitTask::Type::PLAYER) {

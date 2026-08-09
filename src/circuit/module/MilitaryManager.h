@@ -130,6 +130,8 @@ public:
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	void ClearScoutPosition(IUnitTask* task);
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
+	void FillDefencePos(CCircuitUnit* unit, F3Vec& outPositions);
+	springai::AIFloat3 GetDefenceStand();
 	void FillAttackSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillStaticSafePos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillSafePos(CCircuitUnit* unit, F3Vec& outPositions);
@@ -181,14 +183,33 @@ public:
 
 	float GetRangeUnitCountCompensatorScale();
 
+	// apex: super-weapon target de-confliction. CSuperTask::CanAssignTo returns
+	// false unconditionally, so every silo owns a separate task and every task
+	// runs the same deterministic selection over the same enemy groups -- N silos
+	// answer identically and fire N warheads into one crater, and a single silo
+	// re-fires the same spot every reload. A warhead is 1000 metal and 125,000
+	// energy, so that is the expensive part of owning a silo, not the silo.
+	// Kept here rather than on the task because it must be shared BETWEEN tasks.
+	void NoteSuperTarget(const springai::AIFloat3& pos, int frame);
+	bool IsRecentSuperTarget(const springai::AIFloat3& pos, float sqRadius, int frame) const;
+
 private:
 	virtual IUnitTask* DefaultMakeTask(CCircuitUnit* unit) override;
 
+	void UpdateCommCloak();
 	void Watchdog();
 
 	void AddArmyCost(CCircuitUnit* unit);
 	void DelArmyCost(CCircuitUnit* unit);
 	void PointOfInterest(CEnemyInfo* enemy, int start, int step);
+	springai::AIFloat3 GetFrontierPos(const springai::AIFloat3& basePos);
+
+	struct SSuperShot {
+		springai::AIFloat3 pos;
+		int frame;
+	};
+	std::vector<SSuperShot> superShots;
+	bool IsStrongpoint(const springai::AIFloat3& pos) const;
 	CDefenceData::SDefPoint* FindClosestDefPoint(const springai::AIFloat3& pos);
 	CDefenceData::SDefPoint* FindClosestDefPoint(int cluster, const springai::AIFloat3& pos,
 			std::function<bool (const CDefenceData::SDefPoint&)> predicate = nullptr);
@@ -204,6 +225,14 @@ private:
 	CDefenceData* defence;
 	unsigned int defenceIdx;
 	std::map<CCircuitUnit*, int> porcToPoint;  // unit: defPointId
+
+	// Every FINISHED static defence we own, whoever placed it: the FENCE
+	// attribute handlers below fire for build_chain porcupine, DefaultMakeDefence
+	// and script-enqueued towers alike. Positions are cached rather than read per
+	// query because these units never move.
+	std::map<CCircuitUnit*, springai::AIFloat3> fencePos;
+	springai::AIFloat3 defStand;
+	int defStandFrame;
 
 	struct SScoutPoint {
 		int spotNum;  // last used spot number in cluster
