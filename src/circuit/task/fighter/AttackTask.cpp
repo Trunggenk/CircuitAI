@@ -28,6 +28,34 @@
 
 namespace circuit {
 
+// ECONOMY IS THE TARGET, NOT THE ARMY.
+//
+// Upstream scores a target purely by distance, so the enemy army standing in
+// the middle is always nearer than the mex behind it and always wins. That is
+// why squads chase armies around and their extractors are never touched.
+// apexearth: "Our armies tend to chase around enemy armies instead of trying to
+// attack enemy metal extractor positions", and "the goal there shouldn't be to
+// engage enemy army, but to attack their economy."
+//
+// The metric is a DISTANCE, so preference is applied by DIVIDING it: a target
+// worth 5x is treated as if it were five times nearer.
+#define FREE_ECO_PRIORITY	5.0f
+// Prefer the economy that actually dies in the time a raid has. A converter is
+// 380 metal behind 445 hitpoints; an advanced solar 350 behind 1130. Equal-ish
+// metal, and only one is coming down before the owner reacts.
+#define SOFT_ECO_DENSITY	0.50f
+#define SOFT_ECO_BONUS		2.0f
+// ...and push their defensive LINE to the back of the order. A static gun cannot
+// be caught out of position and gives nothing back when it dies, so walking a
+// squad into it is the worst trade on the board -- and it competed on distance
+// like everything else, because their wall sits between us and their base.
+#define ENEMY_WALL_PENALTY	0.2f
+// Radius within which other enemy GROUPS count as defending a target. Enemy
+// group influence is real data (the strength test uses it); the threat map read
+// zero at 14 of 15 target positions when logged, so it is not used here.
+#define NEARBY_ENEMY_DIST	800.f
+
+
 using namespace springai;
 using namespace terrain;
 
@@ -208,7 +236,22 @@ void CAttackTask::Update()
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(),
 			startPos, endPos, pathRange, GetHitTest(),
-			attackPower / circuit->GetMilitaryManager()->GetRangeUnitCountCompensatorScale());
+			attackPower / circuit->GetMilitaryManager()->GetRangeUnitCountCompensatorScale(),
+			// AVOID THEIR ARMY ON THE WAY TO THEIR ECONOMY.
+			//
+			// Upstream passes no threat modifier here, so it defaults to 1.0 and
+			// contested ground costs the same as empty ground -- the short line
+			// runs through their army, which is fine for a doom-stack that means
+			// to fight it and wrong for a raid that means not to.
+			// apexearth: "if we have 1000+ metal worth of units we could use them
+			// as an attack force to AVOID enemy army and ATTACK enemy metal. We
+			// should try to stay away from all enemy army in this type of attack."
+			// The precedent is RaidTask's RAID_ROAM_THREAT_MOD = 8: pricing
+			// contested ground high is what made raid parties work round the
+			// outside on their own, with no waypoints -- just a cost function
+			// that makes the flank the shortest path.
+			// Default 1.0 keeps upstream behaviour until measured.
+			false, circuit->GetTunable("apex_attack_threat_mod", 1.f));
 	pathQueries[leader] = query;
 
 	pathfinder->RunQuery(circuit->GetScheduler().get(), query, [this](const IPathQuery* query) {
@@ -319,7 +362,33 @@ void CAttackTask::FindTarget()
 				}
 			}
 
-			const float sqOEDist = group.vagueMetric * pos.SqDistance2D(ePos) * scale;  // Own to Enemy distance
+			// Preference, applied to the distance metric below by division.
+			float prio = 1.f;
+			if (circuit->GetTunable("apex_eco_target", 1.f) > 0.f) {
+				// The army standing beside this target, which is what makes an
+				// extractor defended or free. Summed from enemy groups rather
+				// than the threat map, for the reason given above.
+				float localInfl = .0f;
+				for (const CEnemyManager::SEnemyGroup& g : groups) {
+					if (g.pos.SqDistance2D(ePos) < SQUARE(NEARBY_ENEMY_DIST)) {
+						localInfl += g.influence;
+					}
+				}
+				const bool isHome = (pos.SqDistance2D(ePos) > sqOBDist);
+				if ((edef != nullptr) && !edef->IsMobile() && !edef->IsAttacker()
+					&& (localInfl <= .0f))
+				{
+					prio *= FREE_ECO_PRIORITY;
+					const float hp = std::max(edef->GetHealth(), 1.f);
+					if ((edef->GetCostM() / hp) > SOFT_ECO_DENSITY) {
+						prio *= SOFT_ECO_BONUS;
+					}
+				}
+				if ((edef != nullptr) && !edef->IsMobile() && edef->IsAttacker() && !isHome) {
+					prio *= ENEMY_WALL_PENALTY;
+				}
+			}
+			const float sqOEDist = group.vagueMetric * pos.SqDistance2D(ePos) * scale / prio;  // Own to Enemy distance
 			if (minSqDist > sqOEDist) {
 				minSqDist = sqOEDist;
 				bestTarget = enemy;
