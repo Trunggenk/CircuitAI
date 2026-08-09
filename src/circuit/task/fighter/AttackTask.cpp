@@ -24,6 +24,8 @@
 
 #include "spring/SpringMap.h"
 
+#include "Drawer.h"
+
 #include "AISCommands.h"
 
 namespace circuit {
@@ -54,6 +56,15 @@ namespace circuit {
 // group influence is real data (the strength test uses it); the threat map read
 // zero at 14 of 15 target positions when logged, so it is not used here.
 #define NEARBY_ENEMY_DIST	800.f
+// Economy on the map EDGE is the raid target of choice. apexearth: "the best mex
+// attacks can be done around the edges of the map. Probably good to prioritize
+// those areas." An edge extractor is approachable from outside the lane both
+// armies fight over, so a raid reaches it without crossing their army -- which is
+// the whole point of raiding the economy instead of engaging.
+// The band is a FRACTION of the map's shorter side, so it means the same thing
+// on an 8x8 and a 24x24.
+#define EDGE_ECO_BAND		0.20f
+#define EDGE_ECO_BONUS		2.0f
 
 
 using namespace springai;
@@ -375,13 +386,23 @@ void CAttackTask::FindTarget()
 					}
 				}
 				const bool isHome = (pos.SqDistance2D(ePos) > sqOBDist);
-				if ((edef != nullptr) && !edef->IsMobile() && !edef->IsAttacker()
-					&& (localInfl <= .0f))
-				{
+				const bool isEco = (edef != nullptr) && !edef->IsMobile() && !edef->IsAttacker();
+				if (isEco && (localInfl <= .0f)) {
 					prio *= FREE_ECO_PRIORITY;
 					const float hp = std::max(edef->GetHealth(), 1.f);
 					if ((edef->GetCostM() / hp) > SOFT_ECO_DENSITY) {
 						prio *= SOFT_ECO_BONUS;
+					}
+				}
+				if (isEco) {
+					const float mapW = circuit->GetTerrainManager()->GetTerrainWidth();
+					const float mapH = circuit->GetTerrainManager()->GetTerrainHeight();
+					const float band = std::min(mapW, mapH)
+							* circuit->GetTunable("apex_edge_band", EDGE_ECO_BAND);
+					const float edgeDist = std::min(std::min(ePos.x, mapW - ePos.x),
+													std::min(ePos.z, mapH - ePos.z));
+					if (edgeDist < band) {
+						prio *= circuit->GetTunable("apex_edge_bonus", EDGE_ECO_BONUS);
 					}
 				}
 				if ((edef != nullptr) && !edef->IsMobile() && edef->IsAttacker() && !isHome) {
@@ -400,6 +421,18 @@ void CAttackTask::FindTarget()
 	if (bestTarget != nullptr) {
 		SetTarget(bestTarget);
 		position = GetTarget()->GetPos();
+		// Put a marker on the map the first time this attack picks a target, so a
+		// spectator can find the group and watch what it does.
+		// apexearth: "when an attack force is created can you have us ping on the
+		// map where it is so i can then watch it closely?"
+		// Dev aid, off by default -- markers are chat-visible clutter in a real
+		// game. AddPoint is the same call the debug 'knn' command uses.
+		if (!isPinged && (circuit->GetTunable("apex_ping_attacks", 0.f) > 0.f)) {
+			isPinged = true;
+			if (circuit->GetDrawer() != nullptr) {
+				circuit->GetDrawer()->AddPoint(position, "ATTACK");
+			}
+		}
 	}
 	// Return: target, startPos=leader->pos, endPos=position
 }

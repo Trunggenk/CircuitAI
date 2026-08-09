@@ -36,6 +36,7 @@ private:
 	void Fallback();
 
 	float minPower;
+	bool isPinged = false;  // map ping for this attack, see apex_ping_attacks
 };
 
 } // namespace circuit
