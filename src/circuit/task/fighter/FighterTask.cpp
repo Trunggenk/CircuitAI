@@ -100,6 +100,24 @@ void IFighterTask::OnUnitIdle(CCircuitUnit* unit)
 	}
 }
 
+// Repairing a damaged unit MID-FIGHT was gated on IsRoleHeavy(), which in this
+// config is essentially T3 plus armfboy -- so for a normal army the repair path
+// was nearly dead, and a unit only ever got repaired after it had already given
+// up and retreated. apexearth: "if constructors are also helping to heal us
+// while we fight, all these things can really help us to turn things around."
+//
+// Cost is the filter instead of role: repairing a 42-metal Grunt is not worth a
+// constructor's walk, repairing a 665-metal Tiger plainly is.
+// 150 made this "every damaged unit in the army", each enqueued at Priority::NOW,
+// which preempts construction: constructors left the base to chase damaged units
+// into the fight. Build power is the economy, so this was paid for out of it.
+#define REPAIR_WORTH_COST	900.f
+
+static inline bool IsWorthRepair(CCircuitDef* cdef)
+{
+	return (cdef->GetCostM() >= REPAIR_WORTH_COST) && !cdef->IsRoleComm();
+}
+
 void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -112,18 +130,29 @@ void IFighterTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 		return;
 	}
 
+	// Committed push: do not peel off. apexearth: "Need to ensure the units
+	// don't suddenly say 'oh lets regroup somewhere safe!' because their purpose
+	// is to kill bases, and they probably can't get away on larger maps."
+	// Retreating mid-breakthrough is worse than dying in it -- a unit that turns
+	// around is killed anyway on the walk home AND gives up the gap it opened.
+	// Commanders still retreat: losing one loses the game, which is a different
+	// trade entirely.
+	if (circuit->IsCommitted() && !cdef->IsRoleComm()) {
+		return;
+	}
+
 	const float healthPerc = unit->GetHealthPercent();
 
 	if (unit->HasShield()) {
 		const float minShield = circuit->GetSetupManager()->GetEmptyShield();
 		if ((healthPerc > cdef->GetRetreat()) && unit->IsShieldCharged(minShield)) {
-			if (cdef->IsRoleHeavy() && (healthPerc < 0.9f) && !unit->IsAttrNoRepair()) {
+			if (IsWorthRepair(cdef) && (healthPerc < 0.9f) && !unit->IsAttrNoRepair()) {
 				circuit->GetBuilderManager()->Enqueue(TaskB::Repair(IBuilderTask::Priority::NOW, unit));
 			}
 			return;
 		}
 	} else if ((healthPerc > cdef->GetRetreat()) && !unit->IsDisarmed(frame)) {
-		if (cdef->IsRoleHeavy() && (healthPerc < 0.9f) && !unit->IsAttrNoRepair()) {
+		if (IsWorthRepair(cdef) && (healthPerc < 0.9f) && !unit->IsAttrNoRepair()) {
 			circuit->GetBuilderManager()->Enqueue(TaskB::Repair(IBuilderTask::Priority::NOW, unit));
 		}
 		if (healthPerc < cdef->GetSelfDHP()) {
@@ -203,7 +232,12 @@ void IFighterTask::Attack(CCircuitUnit* unit, const int frame)
 	CCircuitDef* edef = GetTarget()->GetCircuitDef();
 	const bool isStatic = (edef != nullptr) && !edef->IsMobile();
 
-	const float range = std::min(cdef->GetMinRange(), cdef->GetLosRadius()) * RANGE_MOD;
+	// Same fix as ISquadTask::AssignTo/RemoveAssignee (SquadTask.cpp): a
+	// multi-weapon unit's GetMinRange() is its SHORTEST weapon's range, not
+	// its real engagement distance. GetMaxRange() matches what the rest of
+	// this codebase's combat logic already treats as "how close this unit
+	// needs to get."
+	const float range = std::min(cdef->GetMaxRange(), cdef->GetLosRadius()) * RANGE_MOD;
 	AIFloat3 newPos(tPos.x + range * dir.x, tPos.y, tPos.z + range * dir.z);
 	CTerrainManager::CorrectPosition(newPos);
 	unit->Attack(newPos, GetTarget(), targetTile, GetTarget()->GetUnit()->IsCloaked(), isStatic, frame + FRAMES_PER_SEC * 60);

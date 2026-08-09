@@ -5,6 +5,7 @@
  *      Author: rlcevg
  */
 
+#include <algorithm>
 #include "task/fighter/BombTask.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
@@ -39,13 +40,22 @@ CBombTask::~CBombTask()
 
 bool CBombTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!unit->GetCircuitDef()->IsRoleBomber() ||
-		(unit->GetCircuitDef() != leader->GetCircuitDef()))
-	{
+	if (!unit->GetCircuitDef()->IsRoleBomber()) {
+		return false;
+	}
+	// apex: was an exact CircuitDef match, so only the identical unit type could
+	// join. Use the speed rule CAttackTask applies to ground instead.
+	float speedLeader = leader->GetCircuitDef()->GetSpeed();
+	float speedUnit = unit->GetCircuitDef()->GetSpeed();
+	if (speedLeader > speedUnit) {
+		std::swap(speedLeader, speedUnit);
+	}
+	if (speedLeader * 1.5f < speedUnit) {
 		return false;
 	}
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
+	// apex: was SQUARE(1000.f); aircraft cross that in seconds.
+	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(4000.f)) {
 		return false;
 	}
 	return true;
@@ -281,8 +291,13 @@ void CBombTask::FindTarget()
 //		float altitude;
 		CCircuitDef* edef = enemy->GetCircuitDef();
 		if (edef != nullptr) {
+			// apex: ANTI_STAT skipped every mobile enemy, which excluded
+			// constructors -- the highest-value target for an eco raid. Builders
+			// and commanders stay eligible; other mobiles are still skipped.
+			const bool skipMobile = isAntiStatic && edef->IsMobile()
+					&& !edef->IsRoleBuilder() && !edef->IsRoleComm();
 			if ((edef->GetSpeed() > speed)
-				|| (isAntiStatic && edef->IsMobile())
+				|| skipMobile
 				|| circuit->GetCircuitDef(edef->GetId())->IsIgnore())
 			{
 				continue;
