@@ -553,11 +553,35 @@ void CAttackTask::Update()
 	// making the short route non-existent.
 	const float threatCeiling = ATTACK_CEILING_MOD * attackPower
 			/ circuit->GetMilitaryManager()->GetRangeUnitCountCompensatorScale();
+	// AIR PAYS MORE FOR THREAT THAN GROUND DOES.
+	//
+	// ATTACK_THREAT_MOD makes contested ground twice as expensive to cross,
+	// which is a reasonable price for a ground squad: it has to arrive somewhere
+	// eventually and the short way is usually right. An aircraft has no such
+	// constraint -- it can go round for almost nothing -- and the thing waiting
+	// for it is not symmetrical either. Flak deletes aircraft in a way ground
+	// threat does not delete tanks, so the same multiplier prices the same risk
+	// far too cheaply for air.
+	// apexearth, watching: "we started making air but the enemy has lots of flak
+	// and we're just tossing them into the garbage continuously flying our air
+	// into the center of the map exactly where all the enemy flak is".
+	// The precedent is RaidTask's RAID_ROAM_THREAT_MOD, where raising the price
+	// of contested ground was what made a raid work round the outside on its own
+	// -- no waypoints, just a cost function that makes the flank the short path.
+	// Default 0 keeps ATTACK_THREAT_MOD for everyone, so this is inert until
+	// measured.
+	float threatMod = ATTACK_THREAT_MOD;
+	if ((leader->GetCircuitDef() != nullptr) && leader->GetCircuitDef()->IsAbleToFly()) {
+		const float airMod = circuit->GetTunable("apex_air_threat_mod", 0.f);
+		if (airMod > 0.f) {
+			threatMod = airMod;
+		}
+	}
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(),
 			startPos, endPos, pathRange, GetHitTest(),
 			threatCeiling,
-			false, ATTACK_THREAT_MOD);
+			false, threatMod);
 	pathQueries[leader] = query;
 
 	pathfinder->RunQuery(circuit->GetScheduler().get(), query, [this](const IPathQuery* query) {

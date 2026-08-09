@@ -1073,10 +1073,20 @@ AIFloat3 CMilitaryManager::GetScoutPosition(CCircuitUnit* unit)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	threatMap->SetThreatType(unit);
+	// A cluster counts as scoutable only if some spot in it is BOTH reachable and
+	// quiet, so any cluster the enemy actually holds is excluded -- we only ever
+	// look where they are not, and the map stays dark exactly where the
+	// information is worth having.
+	// apexearth: "we could do better to attack / check mex spots to see if enemy
+	// has stuff there".
+	// A scout is cheap and expendable and its job is to find things; the threat
+	// floor is protecting the wrong unit. Raising the ceiling lets it look at
+	// held ground. Default keeps THREAT_MIN, so this is inert until measured.
+	const float scoutThreat = circuit->GetTunable("apex_scout_threat", THREAT_MIN);
 	auto canMoveTo = [&](const CMetalData::SCluster& cluster) {
 		for (size_t idx : cluster.idxSpots) {
 			if (terrainMgr->CanMoveToPos(area, spots[idx].position)
-				&& threatMap->GetThreatAt(spots[idx].position) < THREAT_MIN)
+				&& threatMap->GetThreatAt(spots[idx].position) < scoutThreat)
 			{
 				return true;
 			}
