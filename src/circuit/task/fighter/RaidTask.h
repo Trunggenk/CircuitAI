@@ -34,11 +34,6 @@ private:
 	void ApplyRaidPath(const CQueryPathSingle* query);
 
 	float maxPower;
-	int lastDetourLog = -1000000;
-	int lastFlankLog = -1000000;
-	springai::AIFloat3 flankPos;
-	bool flankSet = false;
-	bool flankDone = false;
 };
 
 } // namespace circuit

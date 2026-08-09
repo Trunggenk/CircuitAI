@@ -27,7 +27,6 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 
 private:
-	float GetHealthScale();
 	void FindTarget();
 	void ApplyTargetPath(const CQueryPathSingle* query);
 	void FallbackFrontPos();
@@ -37,8 +36,6 @@ private:
 	void Fallback();
 
 	float minPower;
-	int lastDetourLog = -1000000;
-	int lastEngageLog = -1000000;
 };
 
 } // namespace circuit

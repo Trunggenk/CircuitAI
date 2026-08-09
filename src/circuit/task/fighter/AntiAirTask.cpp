@@ -5,7 +5,6 @@
  *      Author: rlcevg
  */
 
-#include <algorithm>
 #include "task/fighter/AntiAirTask.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
@@ -16,7 +15,6 @@
 #include "terrain/path/QueryPathMulti.h"
 #include "unit/action/FightAction.h"
 #include "unit/action/MoveAction.h"
-#include "unit/enemy/EnemyManager.h"
 #include "unit/enemy/EnemyUnit.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -25,26 +23,6 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
-
-// Fighters were sent the moment they rolled off the pad, so a squad of one flew
-// at an enemy flight of four or five. apexearth: "we just go in with one. We
-// should be saving up an equal or greater number of fighters as the enemy has
-// and then attacking."
-//
-// Held at home until the squad's own cost matches this share of the enemy's
-// known air, then released. Below the floor there is nothing worth massing
-// against and the squad flies as before, so early interception is unaffected.
-// GetEnemyCost(AIR) is every enemy air unit ever registered, across every enemy
-// player, dead ones included -- not the flight in front of us. One squad's metal
-// never reaches parity with it, so at 1.0 the hold never released.
-#define AA_MASS_RATIO   0.25f
-#define AA_MASS_FLOOR   400.f   // metal of enemy air below which we do not wait
-// Enemy air this close to the ground we defend is not a flight to be out-massed,
-// it is a raid in progress. The hold above is measured against the enemy's TOTAL
-// air cost, which a single heavy gunship exceeds on its own, so without this the
-// squad waits for a parity it cannot reach while the raider shoots the line.
-#define AA_RAID_RADIUS  2600.f
-
 
 namespace circuit {
 
@@ -66,24 +44,13 @@ CAntiAirTask::~CAntiAirTask()
 
 bool CAntiAirTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!unit->GetCircuitDef()->IsRoleAA()) {
-		return false;
-	}
-	// apex: was `unit->GetCircuitDef() != leader->GetCircuitDef()`, i.e. only the
-	// identical unit type could join. Use the same speed-compatibility rule
-	// CAttackTask applies to ground instead, so mixed AA/fighter types can mass.
-	float speedLeader = leader->GetCircuitDef()->GetSpeed();
-	float speedUnit = unit->GetCircuitDef()->GetSpeed();
-	if (speedLeader > speedUnit) {
-		std::swap(speedLeader, speedUnit);
-	}
-	if (speedLeader * 1.5f < speedUnit) {
+	if (!unit->GetCircuitDef()->IsRoleAA() ||
+		(unit->GetCircuitDef() != leader->GetCircuitDef()))
+	{
 		return false;
 	}
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	// apex: was SQUARE(1000.f). Aircraft cover that in seconds, so newly built
-	// bombers were always out of range and formed solo tasks instead.
-	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(4000.f)) {
+	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
 		return false;
 	}
 	return true;
@@ -318,45 +285,8 @@ void CAntiAirTask::FindTarget()
 	const float maxPower = attackPower * powerMod;
 //	const CCircuitDef::RoleT role = cdef->GetMainRole();
 
-	// Do not go hunting one at a time. Our own cost, not attackPower, because
-	// attackPower is a sum of per-type constants and the comparison is against
-	// an enemy COST from the enemy manager.
-	// The ground we are defending: the held line if we have one, else the base.
-	AIFloat3 homeRef = circuit->GetMilitaryManager()->GetDefenceStand();
-	if (!utils::is_valid(homeRef)) {
-		homeRef = circuit->GetSetupManager()->GetBasePos();
-	}
-	bool isRaid = false;
-	for (auto& kv : circuit->GetEnemyInfos()) {
-		CEnemyInfo* e = kv.second;
-		if (e->IsHidden()) {
-			continue;
-		}
-		CCircuitDef* ed = e->GetCircuitDef();
-		if ((ed != nullptr) && ed->IsAbleToFly()
-			&& (homeRef.SqDistance2D(e->GetPos()) < SQUARE(AA_RAID_RADIUS)))
-		{
-			isRaid = true;
-			break;
-		}
-	}
-
-	const float enemyAir = circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(AIR));
-	if (!isRaid && (enemyAir > AA_MASS_FLOOR)) {
-		float ourAir = .0f;
-		for (CCircuitUnit* u : units) {
-			ourAir += u->GetCircuitDef()->GetCostM();
-		}
-		if (ourAir < enemyAir * AA_MASS_RATIO) {
-			SetTarget(nullptr);
-			return;   // keep gathering; ISquadTask merging runs while we hold
-		}
-	}
-
 	CEnemyInfo* bestTarget = nullptr;
 	float minSqDist = std::numeric_limits<float>::max();
-	CEnemyInfo* bestRaid = nullptr;
-	float minSqRaid = std::numeric_limits<float>::max();
 
 	threatMap->SetThreatType(leader);
 	const CCircuitAI::EnemyInfos& enemies = circuit->GetEnemyInfos();
@@ -367,8 +297,7 @@ void CAntiAirTask::FindTarget()
 		}
 
 		const AIFloat3& ePos = enemy->GetPos();
-		const bool isHomeTgt = (homeRef.SqDistance2D(ePos) < SQUARE(AA_RAID_RADIUS));
-		if ((!isHomeTgt && (maxPower <= threatMap->GetThreatAt(ePos)/* - enemy->GetThreat(role)*/))
+		if ((maxPower <= threatMap->GetThreatAt(ePos)/* - enemy->GetThreat(role)*/)
 			|| !terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;
@@ -399,20 +328,14 @@ void CAntiAirTask::FindTarget()
 		}
 
 		const float sqDist = pos.SqDistance2D(ePos);
-		if (isHomeTgt) {
-			if (minSqRaid > sqDist) {
-				minSqRaid = sqDist;
-				bestRaid = enemy;
-			}
-		} else if (minSqDist > sqDist) {
+		if (minSqDist > sqDist) {
 			minSqDist = sqDist;
 			bestTarget = enemy;
 		}
 	}
 
-	// Whatever is over our own ground outranks whatever is merely closest.
-	SetTarget((bestRaid != nullptr) ? bestRaid : bestTarget);
-	if (GetTarget() != nullptr) {
+	SetTarget(bestTarget);
+	if (bestTarget != nullptr) {
 		position = GetTarget()->GetPos();
 	}
 	// Return: target, startPos=leader->pos, endPos=position

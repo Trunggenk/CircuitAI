@@ -29,13 +29,6 @@
 
 namespace circuit {
 
-// How close a DEFEND task must be to the front to count as holding it, and how
-// far past its own maxPower it must get before it may leave anyway. Above that
-// the squad is surplus and is better spent attacking than standing still.
-#define FRONT_HOLD_RANGE	1800.0f
-#define FRONT_HOLD_POWER	2.0f
-
-
 using namespace springai;
 using namespace terrain;
 
@@ -113,21 +106,6 @@ void CDefendTask::Update()
 	 */
 	if (updCount % 32 == 1) {
 		CMilitaryManager* militaryMgr = static_cast<CMilitaryManager*>(manager);
-		// Hold a share of the defenders ON the line. A DEFEND task promotes its
-		// whole squad into an ATTACK the moment it is strong enough, which is
-		// exactly what turns a garrison back into a roaming blob -- apexearth:
-		// "the way that AI seems to work is it has these squads, and the squads
-		// move around like blobs on the map, they don't necessarily have any
-		// responsibility to cover any specific area".
-		//
-		// Only defenders sitting on the front are held; a DEFEND task somewhere
-		// in the rear has nothing to cover and should still promote.
-		CCircuitAI* circuitAI = manager->GetCircuit();
-		const bool onFront = circuitAI->HasFrontPos()
-				&& (position.SqDistance2D(circuitAI->GetFrontPos()) < SQUARE(FRONT_HOLD_RANGE));
-		if (onFront && (attackPower < maxPower * FRONT_HOLD_POWER)) {
-			return;   // not strong enough to leave the line uncovered
-		}
 		if ((attackPower >= maxPower) || !militaryMgr->GetTasks(check).empty()) {
 			IFighterTask* task = militaryMgr->Enqueue(TaskF::Common(promote));
 			decltype(units) tmpUnits = units;
