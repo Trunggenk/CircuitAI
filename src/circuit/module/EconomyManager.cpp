@@ -41,6 +41,9 @@ namespace circuit {
 // constructor-second. apexearth: "do not reclaim for energy if we are >20%
 // energy".
 #define RECLAIM_ENERGY_MAX	0.20f
+// How far a constructor may WALK for an energy feature (a tree). Roughly one
+// screen: near enough that it is picked up in passing rather than travelled to.
+#define RECLAIM_ENERGY_DIST	900.f
 
 
 using namespace springai;
@@ -1336,8 +1339,25 @@ IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCir
 		delete featDef;
 		const float eStore = GetEnergyStore();
 		const float eFrac = (eStore > 0.f) ? (GetEnergyCur() / eStore) : 0.f;
-		if ((energyFeat > reclaimValue) && (eFrac > RECLAIM_ENERGY_MAX)) {
+		const bool isEnergyFeat = (energyFeat > reclaimValue);
+		if (isEnergyFeat && (eFrac > RECLAIM_ENERGY_MAX)) {
 			continue;
+		}
+		// ...and even when the bank IS low, do not WALK for it. The !isNear
+		// branch above queries GetFeatures() -- every feature on the map -- so
+		// the nearest qualifying tree could be on the far side of the board, and
+		// the constructor-seconds spent reaching it dwarf the energy in it.
+		// apexearth, watching a 1v1: "I saw 5 cons going far from the base and
+		// reclaiming trees (energy)... waste of time... we shouldn't be doing
+		// that".
+		// Scoped to ENERGY-dominant features on purpose: a field of metal wrecks
+		// after a repelled push is worth crossing ground for, and that is this
+		// variant's whole plan. A tree is not.
+		if (isEnergyFeat) {
+			const float maxDist = circuit->GetTunable("apex_reclaim_energy_dist", RECLAIM_ENERGY_DIST);
+			if ((maxDist > 0.f) && (position.SqDistance2D(featPos) > SQUARE(maxDist))) {
+				continue;
+			}
 		}
 		if (reclaimValue < 1.0f) {
 			continue;

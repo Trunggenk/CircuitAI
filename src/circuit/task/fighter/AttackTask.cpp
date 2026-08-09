@@ -157,6 +157,7 @@ static constexpr float ATTACK_CEILING_MOD = 3.f;
 // makes us more passive?"
 #define TRADE_MARGIN_MAX	1.00f
 
+
 static inline float TradeScaledMargin(circuit::CCircuitAI* circuit)
 {
 	// Tunable at runtime so an arm of an A/B is a modoption rather than a
@@ -188,6 +189,59 @@ static inline float TradeScaledMargin(circuit::CCircuitAI* circuit)
 // entire army back into its base". 800 is one T2 weapon range: close enough
 // that the army really is covering the target.
 #define NEARBY_ENEMY_DIST	800.f
+
+// ENCIRCLEMENT. BAR's modrules.lua sets flankingBonus mode 1 with min 1 and
+// max 2, and in mode 1 a unit's flanking vector swings toward where it has been
+// shot from. A unit under fire from one bearing adapts to it; fire from the
+// opposite side lands at up to DOUBLE damage. So standing between two enemy
+// groups is not a mild positional error, it is a 2x damage multiplier against
+// everything we own there.
+// apexearth: "we were walking into an encirclement which gives the enemy attack
+// damage boosts against us... we should be careful about walking too deep into
+// enemies".
+//
+// Measured as the widest angular gap between the bearings, taken FROM the
+// candidate target, of the other enemy groups near it. One group, or several
+// clustered on one side, spans a narrow arc and is a normal frontal fight.
+// Groups on opposite sides span a wide one and are the case above.
+#define ENCIRCLE_RADIUS		1600.f
+#define ENCIRCLE_MIN_ARC	1.57f   // 90 degrees, in radians
+
+// The widest arc, seen from `at`, spanned by enemy groups within ENCIRCLE_RADIUS
+// that could actually shoot -- 0 when they all sit on one side. Returns 0 for
+// fewer than two such groups, so an ordinary single-army fight is never
+// penalised.
+static float EncircleArc(const std::vector<circuit::CEnemyManager::SEnemyGroup>& groups,
+		unsigned selfIdx, const springai::AIFloat3& at)
+{
+	std::vector<float> bearings;
+	for (unsigned j = 0; j < groups.size(); ++j) {
+		if (j == selfIdx) {
+			continue;
+		}
+		const circuit::CEnemyManager::SEnemyGroup& g = groups[j];
+		if (g.influence <= 0.f) {
+			continue;
+		}
+		if (g.pos.SqDistance2D(at) > SQUARE(ENCIRCLE_RADIUS)) {
+			continue;
+		}
+		bearings.push_back(atan2f(g.pos.z - at.z, g.pos.x - at.x));
+	}
+	if (bearings.size() < 2) {
+		return 0.f;
+	}
+	std::sort(bearings.begin(), bearings.end());
+	// The groups span everything EXCEPT the largest gap between adjacent
+	// bearings on the circle, so the spread is 2*pi minus that gap.
+	float widestGap = (bearings.front() + 2.f * (float)M_PI) - bearings.back();
+	for (size_t k = 1; k < bearings.size(); ++k) {
+		widestGap = std::max(widestGap, bearings[k] - bearings[k - 1]);
+	}
+	return 2.f * (float)M_PI - widestGap;
+}
+
+
 
 #define ARTY_PRIORITY		4.0f
 #define LONG_RANGE_PRIORITY	2.0f
@@ -788,7 +842,21 @@ void CAttackTask::FindTarget()
 				prio *= TARGET_STICKY;
 			}
 
-			const float nearMargin = (enemy == prevTarget)
+			// CONTINUE_MARGIN is a sunk-cost discount: once contact is made the
+			// damage already dealt is spent, so finishing is usually right. That
+			// reasoning does not hold against a STATIC gun. It cannot be caught
+			// out of position, it does not retreat, it is repaired for free by
+			// the base behind it, and no amount of committed damage makes the
+			// next exchange better. Discounting the odds to stay in that fight
+			// is how a squad ends up grinding under a tower line.
+			// apexearth, watching: "sometimes we take fights while under enemy
+			// towers... yeesh, bad".
+			// isHome still keeps the discount: a gun shooting us where we live
+			// has to die regardless of the trade.
+			const bool staticGun = (edef != nullptr) && !edef->IsMobile() && edef->IsAttacker();
+			const bool noDiscount = staticGun && !isHome
+					&& (circuit->GetTunable("apex_static_no_continue", 0.f) > 0.f);
+			const float nearMargin = ((enemy == prevTarget) && !noDiscount)
 					? circuit->GetTunable("apex_continue_margin", CONTINUE_MARGIN)
 					: TradeScaledMargin(circuit);
 			if (!isJuggernaut && (localInfl > .0f) && (maxPower < localInfl * nearMargin) && !isHome) {
@@ -796,7 +864,19 @@ void CAttackTask::FindTarget()
 				continue;
 			}
 
-			const float sqOEDist = group.vagueMetric * pos.SqDistance2D(ePos) * scale / prio;  // Own to Enemy distance
+			float encPenalty = 1.f;
+			const float encFactor = circuit->GetTunable("apex_encircle_penalty", 0.f);
+			if (encFactor > 0.f) {
+				const float arc = EncircleArc(groups, i, ePos);
+				if (arc > ENCIRCLE_MIN_ARC) {
+					// Scale with how far past the threshold the arc reaches, so
+					// a target ringed on all sides costs more than one with a
+					// group merely off to the flank.
+					encPenalty = 1.f + encFactor
+							* ((arc - ENCIRCLE_MIN_ARC) / (2.f * (float)M_PI - ENCIRCLE_MIN_ARC));
+				}
+			}
+			const float sqOEDist = group.vagueMetric * pos.SqDistance2D(ePos) * scale * encPenalty / prio;  // Own to Enemy distance
 			if (minSqDist > sqOEDist) {
 				minSqDist = sqOEDist;
 				bestTarget = enemy;
