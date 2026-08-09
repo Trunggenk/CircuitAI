@@ -418,15 +418,17 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 	// incorrect, it should check aoe in vicinity
 	const float aoe = (edef != nullptr) ? edef->GetAoe() : SQUARE_SIZE;
 
+	const float rangeMod = manager->GetCircuit()->GetTunable("apex_range_mod", RANGE_MOD);
+
 	int row = 0;
 	for (const auto& kv : rangeUnits) {
 		CCircuitDef* rowDef = (*kv.second.begin())->GetCircuitDef();
-		const float range = kv.first * RANGE_MOD;
+		const float range = kv.first * rangeMod;
 		// NOTE: 1st unit in 1st row will scout, ignoring GetTarget()->IsInRadarOrLOS()
 		//       as unit may wobble back and forth without firing if turret turn is slow.
 		float range0 = range;
 		if ((row++ == 0) && (isStatic || !GetTarget()->IsInRadarOrLOS())) {
-			range0 = std::min(kv.first, rowDef->GetLosRadius()) * RANGE_MOD;
+			range0 = std::min(kv.first, rowDef->GetLosRadius()) * rangeMod;
 		}
 		const float maxDelta = (M_PI * 0.9f) / kv.second.size();
 		// NOTE: float delta = asinf(cdef->GetRadius() / range);

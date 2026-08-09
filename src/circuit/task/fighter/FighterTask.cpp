@@ -203,7 +203,18 @@ void IFighterTask::Attack(CCircuitUnit* unit, const int frame)
 	CCircuitDef* edef = GetTarget()->GetCircuitDef();
 	const bool isStatic = (edef != nullptr) && !edef->IsMobile();
 
-	const float range = std::min(cdef->GetMinRange(), cdef->GetLosRadius()) * RANGE_MOD;
+	// The LOS clamp is what pulls a long gun with short eyes into knife range:
+	// a Sharpshooter carries range 900 against sightdistance 455, so the old
+	// unconditional min() stood it at 40% of its own reach. ISquadTask::Attack
+	// already only clamps when the target is unseen -- this mirrors that, so a
+	// unit that can already see (or radar) its target keeps its full standoff.
+	const float rangeMod = circuit->GetTunable("apex_range_mod", RANGE_MOD);
+	const bool seesTarget = (circuit->GetTunable("apex_los_standoff", 1.f) > 0.f)
+			&& !isStatic && GetTarget()->IsInRadarOrLOS();
+	float range = cdef->GetMinRange() * rangeMod;
+	if (!seesTarget) {
+		range = std::min(range, cdef->GetLosRadius() * rangeMod);
+	}
 	AIFloat3 newPos(tPos.x + range * dir.x, tPos.y, tPos.z + range * dir.z);
 	CTerrainManager::CorrectPosition(newPos);
 	unit->Attack(newPos, GetTarget(), targetTile, GetTarget()->GetUnit()->IsCloaked(), isStatic, frame + FRAMES_PER_SEC * 60);

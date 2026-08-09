@@ -13,7 +13,7 @@
 
 namespace circuit {
 
-#define RANGE_MOD	0.8f
+#define RANGE_MOD	0.9f  // compiled default; override with apex_range_mod
 
 class CEnemyInfo;
 
