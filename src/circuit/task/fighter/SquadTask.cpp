@@ -469,7 +469,8 @@ void ISquadTask::ActivePath(float speed)
 	// the pathfinder chose and nothing about target or route selection changes.
 	// Width is bounded: a line wider than this stops being one fight.
 	const int n = int(units.size());
-	const float width = std::min(float(n - 1) * SQUAD_FILE_SPACING, SQUAD_FILE_MAX_WIDTH);
+	const float spacing = manager->GetCircuit()->GetTunable("apex_squad_spacing", SQUAD_FILE_SPACING);
+	const float width = std::min(float(n - 1) * spacing, SQUAD_FILE_MAX_WIDTH);
 	const float step = (n > 1) ? (width / float(n - 1)) : 0.f;
 	int i = 0;
 	for (CCircuitUnit* unit : units) {
@@ -671,7 +672,9 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 		const bool outranged = !isArty && !powerDominant && !glassCannon
 				&& (edef != nullptr) && (edef->GetMaxRange() > kv.first);
 		const float standoff = outranged ? (edef->GetMaxRange() * OUTRANGED_SAFETY_MARGIN) : kv.first;
-		const float range = standoff * ATTACK_RANGE_MOD;
+		// Fractional, so the absolute slack scales with the weapon: a Pawn (180)
+		// is parked 9 elmos inside its range where a Rocketeer (475) gets 24.
+		const float range = standoff * manager->GetCircuit()->GetTunable("apex_range_mod", ATTACK_RANGE_MOD);
 		// NOTE: 1st unit in 1st row will scout, ignoring GetTarget()->IsInRadarOrLOS()
 		//       as unit may wobble back and forth without firing if turret turn is slow.
 		float range0 = range;
@@ -741,7 +744,8 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 				// rather than scattering. The existing threat check below still
 				// vetoes any step into worse ground, so this cannot orbit a unit
 				// into a second enemy.
-				const float orbit = ORBIT_RATE * (frame / (float)FRAMES_PER_SEC) * orbitDir;
+				const float orbitRate = manager->GetCircuit()->GetTunable("apex_orbit_rate", ORBIT_RATE);
+				const float orbit = orbitRate * (frame / (float)FRAMES_PER_SEC) * orbitDir;
 				const float angle = alpha + beta + orbit;
 				const float r = (iterNum == 0) ? range0 : range;
 				AIFloat3 newPos(tPos.x + r * cosf(angle), tPos.y, tPos.z + r * sinf(angle));
