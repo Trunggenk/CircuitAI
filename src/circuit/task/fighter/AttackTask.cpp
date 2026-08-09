@@ -159,20 +159,25 @@ static constexpr float ATTACK_CEILING_MOD = 3.f;
 
 static inline float TradeScaledMargin(circuit::CCircuitAI* circuit)
 {
+	// Tunable at runtime so an arm of an A/B is a modoption rather than a
+	// rebuild; defaults are the constants above, so an ordinary game is
+	// unchanged. See CCircuitAI::GetTunable.
+	const float engage = circuit->GetTunable("apex_engage_margin", ENGAGE_MARGIN);
+	const float maxScale = circuit->GetTunable("apex_trade_margin_max", TRADE_MARGIN_MAX);
 	const float ratio = circuit->GetRecentTradeRatio();
 	if (ratio <= 0.f) {
-		return ENGAGE_MARGIN * TRADE_MARGIN_MAX;
+		return engage * maxScale;
 	}
 	// Demand scales with 1/ratio: trading at 0.5 asks for twice the odds
 	// before the clamp, trading at 2.0 asks for a little less than before.
 	float scale = 1.f / ratio;
 	if (scale < TRADE_MARGIN_MIN) scale = TRADE_MARGIN_MIN;
-	if (scale > TRADE_MARGIN_MAX) scale = TRADE_MARGIN_MAX;
+	if (scale > maxScale) scale = maxScale;
 	// Team push multiplier, set from script (Military::UpdateTeamPush). A
 	// coordinated all-in is the one time accepting worse odds is correct: the
 	// whole ally team commits at once, so the local odds understate what is
 	// actually arriving.
-	return ENGAGE_MARGIN * scale * circuit->GetEngageBoost();
+	return engage * scale * circuit->GetEngageBoost();
 }
 
 // Radius around a target within which OTHER enemy groups count as defending it.
@@ -636,7 +641,9 @@ void CAttackTask::FindTarget()
 		const bool isHome = inflMap->GetInfluenceAt(group.pos) >= INFL_SAFE;
 		const bool holdsPrev = wasEngaged && (prevTarget != nullptr)
 				&& (std::find(group.units.begin(), group.units.end(), prevTarget->GetId()) != group.units.end());
-		const float groupMargin = holdsPrev ? CONTINUE_MARGIN : TradeScaledMargin(circuit);
+		const float groupMargin = holdsPrev
+				? circuit->GetTunable("apex_continue_margin", CONTINUE_MARGIN)
+				: TradeScaledMargin(circuit);
 		if (!isJuggernaut && (maxPower <= group.influence * scale * groupMargin) && !isHome) {
 			++skippedWeak;
 			continue;
@@ -781,7 +788,9 @@ void CAttackTask::FindTarget()
 				prio *= TARGET_STICKY;
 			}
 
-			const float nearMargin = (enemy == prevTarget) ? CONTINUE_MARGIN : TradeScaledMargin(circuit);
+			const float nearMargin = (enemy == prevTarget)
+					? circuit->GetTunable("apex_continue_margin", CONTINUE_MARGIN)
+					: TradeScaledMargin(circuit);
 			if (!isJuggernaut && (localInfl > .0f) && (maxPower < localInfl * nearMargin) && !isHome) {
 				++skippedWeak;
 				continue;

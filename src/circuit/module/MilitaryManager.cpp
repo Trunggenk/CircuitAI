@@ -651,7 +651,27 @@ IFighterTask* CMilitaryManager::Enqueue(const TaskF::SFightTask& ti)
 		} break;
 		case IFighterTask::FightType::ATTACK: {
 			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
-			task = new CAttackTask(this, minAttackers, 0.8f / mod);
+			// minAttackers is a flat quota, so a single high-power unit clears it
+			// and walks at whatever is out there alone. apexearth, watching a 1v1:
+			// "saw us make 1 welder and engage an army of ~15 thugs with it" --
+			// armzeus is 350 metal against roughly 1,800 of Thugs.
+			//
+			// CDefendTask already scales its requirement by the largest known
+			// enemy group (SetMaxPower, below); attack did not. Scale it the same
+			// way, so the bar to form an attack rises with what is actually on
+			// the field instead of staying at a constant.
+			//
+			// Off by default (factor 0 keeps the flat quota) because the measured
+			// lesson from this session is that a BLANKET higher bar makes us
+			// worse -- engage_margin 2.0 dropped the army trade ratio from 0.25
+			// to 0.19 -- while caution that tracks the situation helped.
+			float minPower = minAttackers;
+			const float threatFactor = circuit->GetTunable("apex_attack_minpower_threat", 0.f);
+			if (threatFactor > 0.f) {
+				minPower = std::max(minPower,
+						circuit->GetEnemyManager()->GetPreMaxGroupThreat() * threatFactor);
+			}
+			task = new CAttackTask(this, minPower, 0.8f / mod);
 		} break;
 		case IFighterTask::FightType::BOMB: {
 			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
