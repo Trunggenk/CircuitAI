@@ -34,6 +34,9 @@
 #include "Game.h"
 #include "Team.h"
 #include "Lua.h"
+#include "AISCommands.h"  // UNIT_COMMAND_OPTION_*, used by CmdBuildUnit below
+#include "Command.h"       // springai::Command, for reading a unit's own queue
+#include "Sim/Units/CommandAI/Command.h"  // CMD_INSERT
 
 namespace circuit {
 
@@ -169,6 +172,74 @@ static std::string CCircuitAI_GetMapName(CCircuitAI* circuit)
 	return circuit->GetMap()->GetName();
 }
 
+// THE UNIT LIMIT, AND WHAT WE HAVE SPENT OF IT.
+//
+// apexearth, on how a quota should be sized: "Take a look at your unit limit and
+// divvy up your quota based on something reasonable. Let's say you have 100
+// buildings, 2000 unit limit, you're in T1... then your split is on 1900
+// available units."
+//
+// Unit_getLimit is the OTHER callback and must not be used: it indexes
+// AI_TEAM_IDS, the array declared `= {{-1}}` and never assigned, which is why
+// every Game_getTeamResource* call in this engine returns -1. Unit::GetMax()
+// reads unitHandler.MaxUnits() with no team lookup at all.
+static int CCircuitAI_GetUnitMax(CCircuitAI* circuit)
+{
+	// GetMax() is a STATIC callback -- skirmishAiCallback_Unit_getMax ignores the
+	// unit it is asked through -- so any unit of ours answers it, and borrowing
+	// one avoids constructing a wrapper for a unit id that may not exist.
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		if ((kv.second != nullptr) && (kv.second->GetUnit() != nullptr)) {
+			return kv.second->GetUnit()->GetMax();
+		}
+	}
+	return 0;
+}
+
+// How many units we hold, and how many of those are buildings. The split is what
+// makes "slots left for army" a real number rather than a guess.
+static int CCircuitAI_GetTeamUnitCount(CCircuitAI* circuit, bool staticOnly)
+{
+	int n = 0;
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		const CCircuitUnit* u = kv.second;
+		if ((u == nullptr) || (u->GetCircuitDef() == nullptr)) {
+			continue;
+		}
+		if (!staticOnly || !u->GetCircuitDef()->IsMobile()) {
+			++n;
+		}
+	}
+	return n;
+}
+
+// Put a build order at the FRONT of a factory's queue without disturbing what is
+// already on it -- the same CMD_INSERT the Quota Mode widget uses. CmdBuild can
+// only append (SHIFT) or replace (no options), and replacing takes the unit under
+// construction with it.
+//
+// Position 1 rather than 0 leaves whatever is being built alone; the widget does
+// the same, and only drops to 0 when nothing is in progress.
+static void CCircuitUnit_CmdInsertBuild(CCircuitUnit* unit, CCircuitDef* buildDef,
+		bool front)
+{
+	if (buildDef == nullptr) {
+		return;
+	}
+	std::vector<float> params = {
+		front ? 0.f : 1.f,
+		float(-buildDef->GetId()),
+		float(UNIT_COMMAND_OPTION_ALT_KEY | UNIT_COMMAND_OPTION_INTERNAL_ORDER)
+	};
+	// TRY_UNIT needs a CCircuitAI to report a dead unit to, and ITaskModule is an
+	// incomplete type in this translation unit, so the same guard is inline.
+	try {
+		unit->GetUnit()->ExecuteCustomCommand(CMD_INSERT, std::move(params),
+				UNIT_COMMAND_OPTION_ALT_KEY | UNIT_COMMAND_OPTION_CONTROL_KEY);
+	} catch (const std::exception& e) {
+	}
+}
+
 static int CCircuitAI_GetLeadTeamId(CCircuitAI* circuit)
 {
 	return circuit->GetAllyTeam()->GetLeaderId();
@@ -203,6 +274,58 @@ static void CCircuitUnit_CmdMoveTo(CCircuitUnit* unit, const AIFloat3& pos)
 static void CCircuitUnit_CmdRepeat(CCircuitUnit* unit, bool repeat)
 {
 	unit->CmdRepeat(repeat);
+}
+
+// HOW MANY BUILD ORDERS THIS UNIT ALREADY HAS QUEUED, all defs or one.
+//
+// Without this every script-side view of a factory's queue is a guess. Nothing
+// in the bound surface reads it -- CFactoryManager::GetTasks is not registered
+// either -- so a quota that must not re-order what is already ordered had no
+// way to tell, and each way of inferring it failed differently.
+//
+// BAR's own Quota Mode widget is built on exactly this call
+// (`Spring.GetFactoryCommands`), which is why it can insert one unit at a time
+// and never accumulate. A build order carries the NEGATIVE unitDefId as its
+// command id, which is how a queued build is told from a move or a wait.
+static int CCircuitUnit_CountQueued(CCircuitUnit* unit, CCircuitDef* buildDef)
+{
+	const int wanted = (buildDef == nullptr)
+			? 0 : -buildDef->GetId();
+	int n = 0;
+	auto commands = unit->GetUnit()->GetCurrentCommands();
+	for (springai::Command* cmd : commands) {
+		const int id = cmd->GetId();
+		if ((id < 0) && ((wanted == 0) || (id == wanted))) {
+			++n;
+		}
+		delete cmd;
+	}
+	return n;
+}
+
+// Queue `count` of `buildDef` on a factory directly, the way a player does:
+// one standing queue, appended with SHIFT, left alone to run. CRecruitTask is
+// the other way -- one task per unit, and its Finish() calls Cancel(), which
+// CmdRemoves every build order left on the factory. The two cannot coexist on
+// the same factory: whichever unit finishes first wipes the rest of the queue.
+// `replace` issues the first order with no options, which REPLACES the
+// factory's queue; the rest append. That is how a player lays down a fresh
+// queue, and it means no separate clear command is needed.
+//
+// Measured 2026-08-12: `count` is NOT multiplied engine-side. BAR's shift-adds-
+// five is the UI doing it, so one order is one unit.
+static void CCircuitUnit_CmdBuildUnit(CCircuitUnit* unit, CCircuitDef* buildDef,
+		int count, bool replace)
+{
+	if ((buildDef == nullptr) || (count <= 0)) {
+		return;
+	}
+	const AIFloat3 pos = unit->GetPos(0);
+	for (int i = 0; i < count; ++i) {
+		const short opts = ((i == 0) && replace)
+				? 0 : UNIT_COMMAND_OPTION_SHIFT_KEY;
+		unit->CmdBuild(buildDef, pos, UNIT_NO_FACING, opts);
+	}
 }
 
 static AIFloat3 CEnemyManager_GetEnemyPos(CEnemyManager* mgr)
@@ -287,6 +410,22 @@ static CScriptArray* CCircuitAI_GetOwnUnitsOfDef(CCircuitAI* circuit, CCircuitDe
 		arr->SetValue(i++, &unit);
 	}
 	return arr;
+}
+
+static CScriptArray* CCircuitAI_GetOwnStructsNear(CCircuitAI* circuit, const AIFloat3& pos, float radius)
+{
+	const std::vector<CCircuitUnit*> found = circuit->GetOwnStructsNear(pos, radius);
+	CScriptArray* arr = CScriptArray::Create(gUnitArrayType, found.size());
+	asUINT i = 0;
+	for (CCircuitUnit* unit : found) {
+		arr->SetValue(i++, &unit);
+	}
+	return arr;
+}
+
+static float CCircuitAI_GetPathLength(CCircuitAI* circuit, CCircuitUnit* unit, const AIFloat3& to)
+{
+	return circuit->GetPathLength(unit, to);
 }
 
 static float CCircuitAI_GetTeamMetalIncome(CCircuitAI* circuit, int otherTeamId)
@@ -623,6 +762,9 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitAI", "bool IsLoadSave() const", asMETHOD(CCircuitAI, IsLoadSave), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "Type GetBindedRole(Type) const", asMETHOD(CCircuitAI, GetBindedRole), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetLeadTeamId() const", asFUNCTION(CCircuitAI_GetLeadTeamId), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// Sizing a quota: the unit limit, and what we are already holding of it.
+	r = engine->RegisterObjectMethod("CCircuitAI", "int GetUnitMax() const", asFUNCTION(CCircuitAI_GetUnitMax), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "int GetTeamUnitCount(bool) const", asFUNCTION(CCircuitAI_GetTeamUnitCount), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "Type GetSideId() const", asMETHOD(CCircuitAI, GetSideId), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "const string& GetSideName() const", asMETHOD(CCircuitAI, GetSideName), asCALL_THISCALL); ASSERT(r >= 0);
 	gIdArrayType = engine->GetTypeInfoByDecl("array<Id>");
@@ -661,6 +803,8 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitAI", "AIFloat3 FindBuildSiteNear(CCircuitDef@, const AIFloat3& in, float)", asFUNCTION(CCircuitAI_FindBuildSiteNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEngageBoost() const", asMETHOD(CCircuitAI, GetEngageBoost), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "array<CCircuitUnit@>@ GetOwnUnitsOfDef(CCircuitDef@, const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetOwnUnitsOfDef), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "array<CCircuitUnit@>@ GetOwnStructsNear(const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetOwnStructsNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetPathLength(CCircuitUnit@, const AIFloat3& in)", asFUNCTION(CCircuitAI_GetPathLength), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEnemyCostAt(const AIFloat3& in, float) const", asFUNCTION(CCircuitAI_GetEnemyCostAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetBuilderThreatAt(const AIFloat3& in) const", asFUNCTION(CCircuitAI_GetBuilderThreatAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetUnitThreatAt(CCircuitUnit@, const AIFloat3& in) const", asFUNCTION(CCircuitAI_GetUnitThreatAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
@@ -721,6 +865,8 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitDef", "float GetWaterThreat() const", asMETHOD(CCircuitDef, GetWaterThreat), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsAbleToFly() const", asMETHOD(CCircuitDef, IsAbleToFly), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsMobile() const", asMETHOD(CCircuitDef, IsMobile), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsMex() const", asMETHOD(CCircuitDef, IsMex), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsBuilder() const", asMETHOD(CCircuitDef, IsBuilder), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitDef", "int maxThisUnit", asOFFSET(CCircuitDef, maxThisUnit)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitDef", "int sinceFrame", asOFFSET(CCircuitDef, sinceFrame)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitDef", "int cooldown", asOFFSET(CCircuitDef, cooldown)); ASSERT(r >= 0);
@@ -764,6 +910,16 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	// A factory told to repeat re-queues what it finishes, so a spam lab keeps
 	// producing instead of waiting to be handed each unit as a separate task.
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdRepeat(bool)", asFUNCTION(CCircuitUnit_CmdRepeat), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// Build orders straight to a factory, bypassing CRecruitTask entirely. The
+	// two schemes cannot share a factory: CRecruitTask::Finish() calls Cancel(),
+	// which CmdRemoves every build order still queued, so the first completion
+	// under the task scheme wipes a standing queue.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdBuildUnit(CCircuitDef@, int, bool)", asFUNCTION(CCircuitUnit_CmdBuildUnit), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// Reading the factory's own queue. Pass null to count every build order on it.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "int CountQueued(CCircuitDef@)", asFUNCTION(CCircuitUnit_CountQueued), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// Jump the queue without clearing it -- how an advanced constructor gets built
+	// first when the tier changes.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdInsertBuild(CCircuitDef@, bool)", asFUNCTION(CCircuitUnit_CmdInsertBuild), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	// Health is the missing half of "is this risky". Threat alone said commanders
 	// die where the map reads ZERO, because the killer is often at range -- the
 	// last plasma shots landing on a commander already running. Health loss is

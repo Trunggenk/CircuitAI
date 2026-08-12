@@ -129,6 +129,7 @@ public:
 	void ProcessHubDefence(CBDefenceTask* task);
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	void ClearScoutPosition(IUnitTask* task);
+	bool GetGuardAnchor(springai::AIFloat3& outPos) const;
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillDefencePos(CCircuitUnit* unit, F3Vec& outPositions);
 	springai::AIFloat3 GetDefenceStand();
@@ -192,6 +193,9 @@ public:
 	// Kept here rather than on the task because it must be shared BETWEEN tasks.
 	void NoteSuperTarget(const springai::AIFloat3& pos, int frame);
 	bool IsRecentSuperTarget(const springai::AIFloat3& pos, float sqRadius, int frame) const;
+
+	// The one place that decides whether a commander should be cloaked.
+	bool IsCommCloakWanted(CCircuitUnit* unit) const;
 
 private:
 	virtual IUnitTask* DefaultMakeTask(CCircuitUnit* unit) override;

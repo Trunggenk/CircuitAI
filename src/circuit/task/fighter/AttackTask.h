@@ -27,6 +27,7 @@ public:
 	virtual void OnUnitIdle(CCircuitUnit* unit) override;
 
 private:
+	float GetHealthScale();
 	void FindTarget();
 	void ApplyTargetPath(const CQueryPathSingle* query);
 	void FallbackFrontPos();
@@ -36,7 +37,11 @@ private:
 	void Fallback();
 
 	float minPower;
-	bool isPinged = false;  // map ping for this attack, see apex_ping_attacks
+	int lastDetourLog = -1000000;
+	int lastEngageLog = -1000000;
+	// -1 until rolled, then 0 = threat-aware route, 1 = straight in. Rolled once
+	// per task so a squad does not change its mind about the route mid-walk.
+	int chargeRoll = -1;
 };
 
 } // namespace circuit

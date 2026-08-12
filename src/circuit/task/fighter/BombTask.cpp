@@ -5,6 +5,7 @@
  *      Author: rlcevg
  */
 
+#include <algorithm>
 #include "task/fighter/BombTask.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
@@ -39,13 +40,22 @@ CBombTask::~CBombTask()
 
 bool CBombTask::CanAssignTo(CCircuitUnit* unit) const
 {
-	if (!unit->GetCircuitDef()->IsRoleBomber() ||
-		(unit->GetCircuitDef() != leader->GetCircuitDef()))
-	{
+	if (!unit->GetCircuitDef()->IsRoleBomber()) {
+		return false;
+	}
+	// apex: was an exact CircuitDef match, so only the identical unit type could
+	// join. Use the speed rule CAttackTask applies to ground instead.
+	float speedLeader = leader->GetCircuitDef()->GetSpeed();
+	float speedUnit = unit->GetCircuitDef()->GetSpeed();
+	if (speedLeader > speedUnit) {
+		std::swap(speedLeader, speedUnit);
+	}
+	if (speedLeader * 1.5f < speedUnit) {
 		return false;
 	}
 	const int frame = manager->GetCircuit()->GetLastFrame();
-	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(1000.f)) {
+	// apex: was SQUARE(1000.f); aircraft cross that in seconds.
+	if (leader->GetPos(frame).SqDistance2D(unit->GetPos(frame)) > SQUARE(4000.f)) {
 		return false;
 	}
 	return true;
@@ -245,6 +255,7 @@ void CBombTask::FindTarget()
 //								 cdef->GetLosRadius()) * 2;
 	const float sqRange = (GetTarget() != nullptr) ? pos.SqDistance2D(GetTarget()->GetPos()) + 1.f : SQUARE(2000.0f);
 	float minHealth = std::numeric_limits<float>::max();
+	float bestScore = 0.f;
 
 	COOAICallback* callback = circuit->GetCallback();
 	const float trueAoe = cdef->GetAoe() + SQUARE_SIZE;
@@ -281,8 +292,13 @@ void CBombTask::FindTarget()
 //		float altitude;
 		CCircuitDef* edef = enemy->GetCircuitDef();
 		if (edef != nullptr) {
+			// apex: ANTI_STAT skipped every mobile enemy, which excluded
+			// constructors -- the highest-value target for an eco raid. Builders
+			// and commanders stay eligible; other mobiles are still skipped.
+			const bool skipMobile = isAntiStatic && edef->IsMobile()
+					&& !edef->IsRoleBuilder() && !edef->IsRoleComm();
 			if ((edef->GetSpeed() > speed)
-				|| (isAntiStatic && edef->IsMobile())
+				|| skipMobile
 				|| circuit->GetCircuitDef(edef->GetId())->IsIgnore())
 			{
 				continue;
@@ -318,9 +334,29 @@ void CBombTask::FindTarget()
 //                }
 //				cost += ei->GetCost();
 //			}
-			if (minHealth > health) {
+			// VALUE, NOT SOFTNESS. Stock picks the lowest-HEALTH target, which is
+			// why bombers cross the map for a metal extractor and then die to AA
+			// on the way home. apexearth: "we are not focusing on attacking the
+			// enemy home base with the air. We don't wanna attack a lot of the
+			// small mex emplacements and because we're air we fly a huge arc
+			// after hitting a low-value target and usually die to AA."
+			//
+			// Score = metal per hitpoint, discounted by distance, so a lab or a
+			// reactor beats an extractor and a near target beats a far one of
+			// equal worth. The floor stops a bomber committing to anything under
+			// apex_bomb_min_value metal while something better exists.
+			const float value = (edef != nullptr) ? edef->GetCostM() : 0.f;
+			const float sqDist = pos.SqDistance2D(ePos);
+			const float minValue = circuit->GetTunable("apex_bomb_min_value", 200.f);
+			const float distScale = circuit->GetTunable("apex_bomb_dist_scale", 4000.f);
+			const float dist = math::sqrt(sqDist);
+			float score = (value / std::max(health, 1.f)) / (1.f + dist / distScale);
+			if (value < minValue) {
+				score *= 0.1f;   // still allowed, but only if nothing else offers
+			}
+			if (score > bestScore) {
+				bestScore = score;
 				minHealth = health;
-				const float sqDist = pos.SqDistance2D(ePos);
 				if (sqDist < sqRange) {
 					bestTarget = enemy;
 				} else {

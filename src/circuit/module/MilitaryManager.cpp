@@ -651,27 +651,7 @@ IFighterTask* CMilitaryManager::Enqueue(const TaskF::SFightTask& ti)
 		} break;
 		case IFighterTask::FightType::ATTACK: {
 			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
-			// minAttackers is a flat quota, so a single high-power unit clears it
-			// and walks at whatever is out there alone. apexearth, watching a 1v1:
-			// "saw us make 1 welder and engage an army of ~15 thugs with it" --
-			// armzeus is 350 metal against roughly 1,800 of Thugs.
-			//
-			// CDefendTask already scales its requirement by the largest known
-			// enemy group (SetMaxPower, below); attack did not. Scale it the same
-			// way, so the bar to form an attack rises with what is actually on
-			// the field instead of staying at a constant.
-			//
-			// Off by default (factor 0 keeps the flat quota) because the measured
-			// lesson from this session is that a BLANKET higher bar makes us
-			// worse -- engage_margin 2.0 dropped the army trade ratio from 0.25
-			// to 0.19 -- while caution that tracks the situation helped.
-			float minPower = minAttackers;
-			const float threatFactor = circuit->GetTunable("apex_attack_minpower_threat", 0.f);
-			if (threatFactor > 0.f) {
-				minPower = std::max(minPower,
-						circuit->GetEnemyManager()->GetPreMaxGroupThreat() * threatFactor);
-			}
-			task = new CAttackTask(this, minPower, 0.8f / mod);
+			task = new CAttackTask(this, minAttackers, 0.8f / mod);
 		} break;
 		case IFighterTask::FightType::BOMB: {
 			const float mod = (float)rand() / RAND_MAX * attackMod.len + attackMod.min;
@@ -1073,20 +1053,10 @@ AIFloat3 CMilitaryManager::GetScoutPosition(CCircuitUnit* unit)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	threatMap->SetThreatType(unit);
-	// A cluster counts as scoutable only if some spot in it is BOTH reachable and
-	// quiet, so any cluster the enemy actually holds is excluded -- we only ever
-	// look where they are not, and the map stays dark exactly where the
-	// information is worth having.
-	// apexearth: "we could do better to attack / check mex spots to see if enemy
-	// has stuff there".
-	// A scout is cheap and expendable and its job is to find things; the threat
-	// floor is protecting the wrong unit. Raising the ceiling lets it look at
-	// held ground. Default keeps THREAT_MIN, so this is inert until measured.
-	const float scoutThreat = circuit->GetTunable("apex_scout_threat", THREAT_MIN);
 	auto canMoveTo = [&](const CMetalData::SCluster& cluster) {
 		for (size_t idx : cluster.idxSpots) {
 			if (terrainMgr->CanMoveToPos(area, spots[idx].position)
-				&& threatMap->GetThreatAt(spots[idx].position) < scoutThreat)
+				&& threatMap->GetThreatAt(spots[idx].position) < THREAT_MIN)
 			{
 				return true;
 			}
@@ -1210,9 +1180,49 @@ AIFloat3 CMilitaryManager::GetDefenceStand()
 	return defStand;
 }
 
+// Where a squad with nothing to shoot should be standing: where we are actually
+// being hit, else the line, else nothing.
+//
+// Both are single positions and the priority is STRICT. Handing the pathfinder a
+// set of candidates makes it pick the cheapest one to walk to, and our own tower
+// cluster is always cheaper to walk to than the front -- which is how a squad
+// ends up garrisoning the base while a border base burns.
+bool CMilitaryManager::GetGuardAnchor(AIFloat3& outPos) const
+{
+	// A leak behind the line outranks the line. GetAttackHotspot is the
+	// cost-weighted decaying centroid of OUR OWN losses, so it points at the
+	// fighting rather than at geometry. It is a centroid of every loss though,
+	// including an army dying on the far side of the map, so it is only followed
+	// where we are not the weaker side -- otherwise the garrison marches into the
+	// enemy base to defend it.
+	AIFloat3 hot;
+	float weight;
+	if (circuit->GetAttackHotspot(hot, weight) && circuit->IsPosOnMap(hot)
+		&& (circuit->GetInflMap()->GetInfluenceAt(hot) > -INFL_EPS))
+	{
+		outPos = hot;
+		return true;
+	}
+	if (circuit->HasFrontPos()) {
+		outPos = circuit->GetFrontPos();
+		return true;
+	}
+	return false;
+}
+
 void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 {
-	// Our own towers first. Both callers reach here because the squad found no
+	outPositions.clear();
+
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	SArea* area = unit->GetArea();
+	AIFloat3 anchor;
+	if (GetGuardAnchor(anchor) && terrainMgr->CanMoveToPos(area, anchor)) {
+		outPositions.push_back(anchor);
+		return;
+	}
+
+	// Then our own towers. Both callers reach here because the squad found no
 	// target it could beat, which is exactly the moment it should fall back onto
 	// static defence instead of onto whichever metal cluster is nearest the lane.
 	FillDefencePos(unit, outPositions);
@@ -1224,8 +1234,6 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	CMetalManager* metalMgr = circuit->GetMetalManager();
-	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-	SArea* area = unit->GetArea();
 	const CMetalData::Clusters& clusters = metalMgr->GetClusters();
 
 	CMetalData::PointPredicate predicate = [inflMap, metalMgr, terrainMgr, area, clusters](const int index) {
@@ -1531,11 +1539,25 @@ void CMilitaryManager::UpdateDefenceTasks()
 //	const CMetalData::Metals& spots = mm->GetSpots();
 	const CMetalData::Clusters& clusters = mm->GetClusters();
 //	const std::vector<CEnemyManager::SEnemyGroup>& enemyGroups = circuit->GetEnemyManager()->GetEnemyGroups();
+	// A DEFEND task takes its stand position ONCE, in Enqueue, from
+	// GetDefenceStand() -- the tower cluster nearest our lane at the moment the
+	// task happened to be created. It was never revised afterwards, so a garrison
+	// formed in minute 5 was still holding minute 5's ground at minute 40, and
+	// every unit built into it was sent there by CDefendTask::Start. apexearth:
+	// "the enemy is attacking one of our frontline bases and our huge army isn't
+	// there to protect it."
+	//
+	// Re-anchored to the same thing a squad with no target walks to, so the two
+	// agree: where we are being hit, else the front. Only while the task has no
+	// target of its own -- an engaged task writes its target into position and
+	// must not be pulled off it.
+	AIFloat3 anchor;
+	const bool hasAnchor = GetGuardAnchor(anchor);
 	for (IFighterTask* task : tasks) {
 		CDefendTask* dt = static_cast<CDefendTask*>(task);
-//		if (dt->GetTarget() != nullptr) {
-//			continue;
-//		}
+		if (hasAnchor && (dt->GetTarget() == nullptr)) {
+			dt->SetPosition(anchor);
+		}
 //		STerrainMapArea* area = dt->GetLeader()->GetArea();
 //		CMetalData::PointPredicate predicate = [em, tm, area, &spots, &clusters](const int index) {
 //			const CMetalData::MetalIndices& idcs = clusters[index].idxSpots;
@@ -1931,27 +1953,40 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 // Share of energy income the commander's cloak may consume.
 #define COMM_CLOAK_SHARE	0.1f
 
-// Cloak is switched on once when a unit finishes and nothing outside a retreat
-// task ever reconsiders it, so a commander could sit -- or walk -- cloaked with
-// an empty bank for the rest of the game. The moving cost is what bites:
-// corcom is 100 e/s standing and 1000 e/s moving, and CCircuitDef takes the max
-// of the two, so cloak is affordable only above 10,000 e/s of income.
+// The moving cost is what bites: corcom is 100 e/s standing and 1000 e/s moving,
+// and CCircuitDef takes the max of the two, so cloak is affordable only above
+// 10,000 e/s of income. Below that the commander must show itself; above it,
+// the energy is not worth thinking about and it stays hidden all the time --
+// a visible commander is the first thing an enemy aims at.
 // apexearth: "one of our commanders is just walking back and forth while trying
 // to stay cloaked. 1000 energy to move while cloaked... He has no energy now and
-// still cloaked."
+// still cloaked." / "when it is late game and we are very rich our commanders
+// should always stay cloaked."
+bool CMilitaryManager::IsCommCloakWanted(CCircuitUnit* unit) const
+{
+	CCircuitDef* cdef = unit->GetCircuitDef();
+	if (!cdef->IsAbleToCloak()) {
+		return false;
+	}
+	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	return !economyMgr->IsEnergyStalling()
+			&& (cdef->GetCloakCost() < economyMgr->GetAvgEnergyIncome() * COMM_CLOAK_SHARE);
+}
+
+// Cloak is switched on once when a unit finishes and nothing outside a retreat
+// task ever reconsiders it, so without this the state drifts in both directions:
+// a poor commander walks around cloaked with an empty bank, and a rich one that
+// was uncloaked once stays visible for the rest of the game.
 void CMilitaryManager::UpdateCommCloak()
 {
 	CCircuitUnit* comm = circuit->GetSetupManager()->GetCommander();
 	if ((comm == nullptr) || comm->IsDead() || !comm->GetCircuitDef()->IsAbleToCloak()) {
 		return;
 	}
-	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const bool canAfford = !economyMgr->IsEnergyStalling()
-			&& (comm->GetCircuitDef()->GetCloakCost()
-				< economyMgr->GetAvgEnergyIncome() * COMM_CLOAK_SHARE);
-	if (!canAfford && comm->GetUnit()->IsCloaked()) {
+	const bool wantCloak = IsCommCloakWanted(comm);
+	if (wantCloak != comm->GetUnit()->IsCloaked()) {
 		TRY_UNIT(circuit, comm,
-			comm->CmdCloak(false);
+			comm->CmdCloak(wantCloak);
 		)
 	}
 }
