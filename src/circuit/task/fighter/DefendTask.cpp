@@ -359,7 +359,16 @@ bool CDefendTask::FindTarget()
 		// squad held away from the base is blind to whatever is shooting it.
 		// `atUs` is the same reach Update() uses to decide ENGAGE.
 		const bool atUs = (pos.SqDistance2D(ePos) < SQUARE(highestRange + 500.f));
-		if ((!atUs && (inflMap->GetAllyDefendInflAt(ePos) < INFL_EPS))
+		// apex: DEFENCE IS A POST, NOT A PURSUIT. Candidates are measured from
+		// the task's assigned position, not from wherever the squad has crept
+		// to -- atUs alone let a pool that drifted forward legitimize the next
+		// target from its new ground, chase by chase, and "defense" became an
+		// unbounded attack (apexearth: "if the enemy has fled or left, why are
+		// we still attacking them as if it is defense?"). Something shooting
+		// the squad NOW is still always fought, wherever it stands.
+		const bool atPost = (circuit->GetTunable("apex_defend_post", 1.f) <= 0.f)
+			|| (position.SqDistance2D(ePos) < SQUARE(highestRange + 500.f));
+		if (((!atUs && !atPost) && (inflMap->GetAllyDefendInflAt(ePos) < INFL_EPS))
 			|| !terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;
@@ -473,7 +482,15 @@ bool CDefendTask::FindTarget()
 
 	if (bestTarget != nullptr) {
 		SetTarget(bestTarget);
-		position = GetTarget()->GetPos();
+		// apex: the anchor does NOT follow the target. This rewrite advanced
+		// the post to every elected enemy, so each chase re-based the pool on
+		// its new ground and the next election reached further -- the creep
+		// that turned defense into pursuit. The post stays where it was
+		// assigned; when the enemy flees past reach, the no-target fallback
+		// walks the pool back to a front post instead of following.
+		if (circuit->GetTunable("apex_defend_post", 1.f) <= 0.f) {
+			position = GetTarget()->GetPos();
+		}
 	}
 	if (enemyPositions.empty()) {
 		return false;
