@@ -18,6 +18,7 @@
 #include "unit/action/MoveAction.h"
 #include "unit/action/SupportAction.h"
 #include "unit/enemy/EnemyUnit.h"
+#include "unit/enemy/EnemyManager.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
@@ -26,6 +27,7 @@
 
 #include "OOAICallback.h"
 #include "AISCommands.h"
+#include "Drawer.h"
 
 namespace circuit {
 
@@ -33,7 +35,17 @@ namespace circuit {
 // far past its own maxPower it must get before it may leave anyway. Above that
 // the squad is surplus and is better spent attacking than standing still.
 #define FRONT_HOLD_RANGE	1800.0f
-#define FRONT_HOLD_POWER	2.0f
+// A DEFENCE POOL MUST BE ABLE TO REACH THE BAR IT IS HELD TO.
+//
+// CanAssignTo above stops a pool accepting units at maxPower, and this held it
+// until attackPower >= maxPower * FRONT_HOLD_POWER -- so at 2.0 the release was
+// unreachable except by merging two full pools, and every pool passes the
+// `onFront` test by construction because UpdateDefenceTasks writes the anchor
+// into `position` and this compares `position` against that same anchor.
+// apexearth, watching a 400 metal/s player: "we have 257 of them and they all
+// just stay in our base... none of them leave."
+// At 1.0 the release matches the cap: a pool that is full is a pool that may go.
+#define FRONT_HOLD_POWER	1.0f
 
 
 using namespace springai;
@@ -64,13 +76,23 @@ void CDefendTask::AssignTo(CCircuitUnit* unit)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	highestRange = std::max(highestRange, cdef->GetLosRadius());
 
-	if (cdef->IsRoleSupport() && (leader != unit)) {
+	// See CAttackTask::AssignTo: only an escort that cannot join the squad's
+	// fight follows the leader.
+	if (cdef->IsRoleSupport() && !cdef->HasSurfToLand() && (leader != unit)) {
 		unit->PushBack(new CSupportAction(unit));
 	}
 
 	int squareSize = manager->GetCircuit()->GetPathfinder()->GetSquareSize();
 	ITravelAction* travelAction;
-	if (cdef->IsAttrSiege()) {
+	// Formation travel (apexearth 2026-08-21): the whole ground squad marches on
+	// synchronized-speed FIGHT orders, not per-unit moves -- engage together en
+	// route, hold the line together. Wounded still leave: RetreatTask swaps the
+	// travel act out (dropping the fight order), and the engagement standoff
+	// ring still owns distance-keeping once fighting starts. Flyers keep MOVE.
+	if ((cdef->IsAttrSiege() && (manager->GetCircuit()->GetTunable("apex_siege_fight", 1.f) > 0.f))
+		|| (!cdef->IsAbleToFly()
+			&& (manager->GetCircuit()->GetTunable("apex_fight_travel", 1.f) > 0.f)))
+	{
 		travelAction = new CFightAction(unit, squareSize);
 	} else {
 		travelAction = new CMoveAction(unit, squareSize);
@@ -98,8 +120,13 @@ void CDefendTask::Start(CCircuitUnit* unit)
 //	AIFloat3 freePos = terrainMgr->FindSpringBuildSite(unit->GetCircuitDef(), pos, 300.0f, UNIT_NO_FACING);
 	pos = utils::is_valid(freePos) ? freePos : pos;
 
+	// apex: transit is a MOVE, not a fight-walk. A fight order stops the unit
+	// to trade with whatever it meets on the way, alone -- the measured DEFEND
+	// death bucket. Engaged fighting is Attack()'s ring; the walk there should
+	// not wade (apexearth: "using a fight order was incorrect. We need to be
+	// using move commands along with set target").
 	TRY_UNIT(circuit, unit,
-		unit->CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);
+		unit->CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);
 		unit->CmdWantedSpeed(NO_SPEED_LIMIT);
 	)
 }
@@ -125,14 +152,33 @@ void CDefendTask::Update()
 		CCircuitAI* circuitAI = manager->GetCircuit();
 		const bool onFront = circuitAI->HasFrontPos()
 				&& (position.SqDistance2D(circuitAI->GetFrontPos()) < SQUARE(FRONT_HOLD_RANGE));
-		if (onFront && (attackPower < maxPower * FRONT_HOLD_POWER)) {
-			return;   // not strong enough to leave the line uncovered
-		}
-		if ((attackPower >= maxPower) || !militaryMgr->GetTasks(check).empty()) {
+		// THE HOLD MUST NOT SKIP THE MERGE BELOW. Returning here jumped over
+		// GetMergeTask(), and merging is the ONLY way a defence pool can grow:
+		// CMilitaryManager::Enqueue builds a fresh one-unit CDefendTask for every
+		// unit, and DefaultMakeTask scans GUARD tasks only. So a pool whose units
+		// were individually weaker than the bar could never combine to reach it
+		// and stood in base for the rest of the game, while anything already over
+		// the bar promoted and left alone.
+		const bool held = onFront && (attackPower < maxPower * FRONT_HOLD_POWER);
+		// The any-attack-exists shortcut fed solos: each promotion CREATES an
+		// attack task, so after the first real squad -- alive or already dead --
+		// every fresh 1-unit pool saw "an attack exists" and left alone, a
+		// self-sustaining one-by-one stream (measured first-10m squad avg 1.3
+		// vs enemy 2.6). Reinforcements now leave only at a real fraction of
+		// the current quota, which tracks the living army.
+		const float reinforceFrac = circuitAI->GetTunable("apex_reinforce_frac", 0.5f);
+		const bool mayReinforce = !militaryMgr->GetTasks(check).empty()
+				&& (attackPower >= maxPower * reinforceFrac);
+		if (!held && ((attackPower >= maxPower) || mayReinforce)) {
 			IFighterTask* task = militaryMgr->Enqueue(TaskF::Common(promote));
 			decltype(units) tmpUnits = units;
 			for (CCircuitUnit* unit : tmpUnits) {
+				// Read BEFORE AssignTask: RemoveAssignee erases coward state.
+				const bool coward = IsCoward(unit);
 				manager->AssignTask(unit, task);
+				if (coward) {
+					task->MarkCoward(unit);
+				}
 			}
 //			manager->DoneTask(this);  // NOTE: RemoveAssignee() will abort task
 			return;
@@ -221,8 +267,10 @@ void CDefendTask::Merge(ISquadTask* task)
 	for (CCircuitUnit* unit : rookies) {
 		unit->SetTask(this);
 
+		// apex: rookies RUN to the group instead of fight-walking -- the
+		// fight order made every merge a stream of solo engagements en route.
 		TRY_UNIT(circuit, unit,
-			unit->CmdFightTo(leadPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame);
+			unit->CmdMoveTo(leadPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame);
 		)
 	}
 	units.insert(rookies.begin(), rookies.end());
@@ -247,7 +295,7 @@ bool CDefendTask::FindTarget()
 	const AIFloat3& pos = leader->GetPos(circuit->GetLastFrame());
 	SArea* area = leader->GetArea();
 	CCircuitDef* cdef = leader->GetCircuitDef();
-	const float maxPower = attackPower * powerMod;
+	const float maxPower = attackPower * powerMod * GetHealthScale();
 	const float weaponRange = cdef->GetMaxRange() * 0.9f;
 	const int canTargetCat = cdef->GetTargetCategory();
 	const int noChaseCat = cdef->GetNoChaseCategory();
@@ -270,7 +318,13 @@ bool CDefendTask::FindTarget()
 		}
 
 		const AIFloat3& ePos = enemy->GetPos();
-		if ((inflMap->GetAllyDefendInflAt(ePos) < INFL_EPS)
+		// A DEFENCE SQUAD MUST FIGHT WHAT IS ON TOP OF IT. GetAllyDefendInflAt is
+		// written only by our BUILDINGS -- CInfluenceMap::AddStaticArmed and
+		// AddUnarmed; AddMobileArmed feeds drawAllyInfl and never this one -- so a
+		// squad held away from the base is blind to whatever is shooting it.
+		// `atUs` is the same reach Update() uses to decide ENGAGE.
+		const bool atUs = (pos.SqDistance2D(ePos) < SQUARE(highestRange + 500.f));
+		if ((!atUs && (inflMap->GetAllyDefendInflAt(ePos) < INFL_EPS))
 			|| !terrainMgr->CanMoveToPos(area, ePos))
 		{
 			continue;
@@ -280,9 +334,48 @@ bool CDefendTask::FindTarget()
 		float checkPower = maxPower;
 		if (sqEBDist < sqBaseRange) {
 			checkPower *= 4.0f - 3.0f / baseRange * sqrtf(sqEBDist);  // 400% near base
+		} else if (atUs) {
+			checkPower *= 4.0f;   // already in contact: same allowance as at home
 		}
-		if (checkPower <= threatMap->GetThreatAt(ePos)) {
+		const float eThreat = threatMap->GetThreatAt(ePos);
+		if (checkPower <= eThreat) {
 			continue;
+		}
+		// PROPORTIONAL RESPONSE. Line 355 below rewrites this task's anchor to
+		// the chosen target, so chasing is the WHOLE pool walking there -- and
+		// the nearest-first choice is value-blind, so a two-raider ping in the
+		// rear pulled every massed pool off the line (apexearth: "I see us move
+		// our entire army way in the back to chase down some petty raiders...
+		// then the enemy just walks into our base and crushes us"). A pool only
+		// walks for a threat worth a real fraction of its own strength; fresh
+		// small pools still pass this gate and peel off to handle intruders,
+		// and anything already in contact (atUs) is always fought.
+		if (!atUs && (eThreat < attackPower
+				* circuit->GetTunable("apex_chase_min_ratio", 0.15f)))
+		{
+			continue;
+		}
+		// The eThreat gate above reads the surf threat map, which measures ~0
+		// almost everywhere -- a Punisher line rates as empty ground and the
+		// pool walks into it. Enemy GROUP influence is the live layer (the same
+		// data AttackTask's strength test reads), so refuse walking the pool at
+		// ground whose standing groups outweigh it. Statics carry thr_mod.static
+		// weight in group influence. Scoped away from home on purpose: what is
+		// on top of us (atUs) or inside the base ring is fought regardless.
+		if (!atUs && (sqEBDist >= sqBaseRange)) {
+			float localInfl = .0f;
+			const std::vector<CEnemyManager::SEnemyGroup>& groups =
+					circuit->GetEnemyManager()->GetEnemyGroups();
+			for (const CEnemyManager::SEnemyGroup& g : groups) {
+				if (g.pos.SqDistance2D(ePos) < SQUARE(800.f)) {
+					localInfl += g.influence;
+				}
+			}
+			if ((localInfl > .0f) && (maxPower < localInfl
+					* circuit->GetTunable("apex_defend_engage_margin", 1.0f)))
+			{
+				continue;
+			}
 		}
 
 		const float elevation = map->GetElevationAt(ePos.x, ePos.z);
@@ -342,6 +435,15 @@ void CDefendTask::ApplyTargetPath(const CQueryPathMulti* query)
 	pPath = query->GetPathInfo();
 
 	if (!pPath->posPath.empty()) {
+		// apex: intent pings for the watching player (apexearth: "Can we have
+		// our squads ping on the map so that I can understand what they're
+		// thinking when they're moving?"). apex_ping=1 only; throttled by the
+		// path grant, which fires on decision, not per tick.
+		CCircuitAI* circuit = manager->GetCircuit();
+		if (circuit->GetTunable("apex_ping", 0.f) > 0.f) {
+			circuit->GetDrawer()->AddPoint(leader->GetLastPos(),
+					utils::string_format("DEF chase n=%d", (int)units.size()).c_str());
+		}
 		ActivePath(lowestSpeed);
 	} else {
 		Fallback();
@@ -377,7 +479,18 @@ void CDefendTask::ApplyFrontPos(const CQueryPathMulti* query)
 
 	if (!pPath->path.empty()) {
 		if (pPath->path.size() > 2) {
-			ActivePath();
+			// apex: the pool marches TOGETHER. Uncapped, the fast units reach
+			// the front first and fight alone -- apexearth: "we often have our
+			// faster units running in and engaging the enemy army first, they
+			// die, then the slower units in the back either fight and die, or
+			// are already running away... move at the speed of the slowest
+			// unit in the group. This helps them to all stay together."
+			CCircuitAI* circuit = manager->GetCircuit();
+			if (circuit->GetTunable("apex_ping", 0.f) > 0.f) {
+				circuit->GetDrawer()->AddPoint(leader->GetLastPos(),
+						utils::string_format("DEF march n=%d", (int)units.size()).c_str());
+			}
+			ActivePath(lowestSpeed);
 		}
 	} else {
 		FallbackBasePos();
@@ -423,9 +536,11 @@ void CDefendTask::Fallback()
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
-		unit->GetTravelAct()->StateWait();
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->StateWait();
+		}
 		TRY_UNIT(circuit, unit,
-			unit->CmdFightTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
+			unit->CmdMoveTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 			unit->CmdWantedSpeed(lowestSpeed);
 		)
 	}
