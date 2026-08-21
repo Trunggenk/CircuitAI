@@ -358,11 +358,14 @@ bool CDefendTask::FindTarget()
 		// The eThreat gate above reads the surf threat map, which measures ~0
 		// almost everywhere -- a Punisher line rates as empty ground and the
 		// pool walks into it. Enemy GROUP influence is the live layer (the same
-		// data AttackTask's strength test reads), so refuse walking the pool at
-		// ground whose standing groups outweigh it. Statics carry thr_mod.static
-		// weight in group influence. Scoped away from home on purpose: what is
-		// on top of us (atUs) or inside the base ring is fought regardless.
-		if (!atUs && (sqEBDist >= sqBaseRange)) {
+		// data AttackTask's strength test reads), so this can refuse walking
+		// the pool at ground whose standing groups outweigh it. Scoped away
+		// from home: what is on top of us (atUs) or inside the base ring is
+		// fought regardless. DEFAULT OFF: at margins 1.0 and 0.6 it traded
+		// losses for timeout draws without winning more (see CHANGES.md
+		// 2026-08-21); the lever stays for experiments.
+		const float engageMargin = circuit->GetTunable("apex_defend_engage_margin", 0.f);
+		if ((engageMargin > 0.f) && !atUs && (sqEBDist >= sqBaseRange)) {
 			float localInfl = .0f;
 			const std::vector<CEnemyManager::SEnemyGroup>& groups =
 					circuit->GetEnemyManager()->GetEnemyGroups();
@@ -371,9 +374,7 @@ bool CDefendTask::FindTarget()
 					localInfl += g.influence;
 				}
 			}
-			if ((localInfl > .0f) && (maxPower < localInfl
-					* circuit->GetTunable("apex_defend_engage_margin", 1.0f)))
-			{
+			if ((localInfl > .0f) && (maxPower < localInfl * engageMargin)) {
 				continue;
 			}
 		}
