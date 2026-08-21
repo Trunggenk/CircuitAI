@@ -77,7 +77,7 @@ void CAntiHeavyTask::AssignTo(CCircuitUnit* unit)
 
 	int squareSize = circuit->GetPathfinder()->GetSquareSize();
 	ITravelAction* travelAction;
-	if (cdef->IsAttrSiege()) {
+	if (cdef->IsAttrSiege() && (circuit->GetTunable("apex_siege_fight", 1.f) > 0.f)) {
 		travelAction = new CFightAction(unit, squareSize);
 	} else {
 		travelAction = new CMoveAction(unit, squareSize);
@@ -111,7 +111,9 @@ void CAntiHeavyTask::Start(CCircuitUnit* unit)
 		return;
 	}
 	if (!pPath->posPath.empty()) {
-		unit->GetTravelAct()->SetPath(pPath);
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->SetPath(pPath, lowestSpeed);
+		}
 	}
 }
 
@@ -150,7 +152,9 @@ void CAntiHeavyTask::Update()
 			CCircuitAI* circuit = manager->GetCircuit();
 			int frame = circuit->GetLastFrame() + FRAMES_PER_SEC * 60;
 			for (CCircuitUnit* unit : units) {
-				unit->GetTravelAct()->StateWait();
+				if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+					unit->GetTravelAct()->StateWait();
+				}
 				TRY_UNIT(circuit, unit,
 					unit->CmdFightTo(groupPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame);
 				)
@@ -203,7 +207,9 @@ void CAntiHeavyTask::Update()
 			if (unit->GetDGunAct() != nullptr) {
 				unit->GetDGunAct()->StateActivate();
 			}
-			unit->GetTravelAct()->StateWait();
+			if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+				unit->GetTravelAct()->StateWait();
+			}
 
 			if (unit->GetCircuitDef()->IsRoleMine()) {
 				const bool isAttack = (target->GetInfluence() > power);
@@ -252,12 +258,13 @@ void CAntiHeavyTask::OnUnitIdle(CCircuitUnit* unit)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
-	if (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist)) {
+	// See CAttackTask::OnUnitIdle: a standoff move completes while the target is
+	// still alive, so idle no longer implies "arrived and found nothing".
+	if ((GetTarget() == nullptr)
+		&& (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist)))
+	{
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		float x = rand() % terrainMgr->GetTerrainWidth();
-		float z = rand() % terrainMgr->GetTerrainHeight();
-		position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
-		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
+		position = RoamPos(leader);
 	}
 
 	if (units.find(unit) != units.end()) {
@@ -293,7 +300,7 @@ bool CAntiHeavyTask::FindTarget()
 	const bool isAntiStatic = cdef->IsAttrAntiStat();
 	const bool notAA = !cdef->HasSurfToAir();
 	const int canTargetCat = cdef->GetTargetCategory();
-	const float maxPower = attackPower * powerMod;
+	const float maxPower = attackPower * powerMod * GetHealthScale();
 	const float weaponRange = cdef->GetMaxRange();
 	const float range = std::max(highestRange, threatMap->GetSquareSize() * 2.0f);
 	const float losSqDist = SQUARE(range);
@@ -488,7 +495,9 @@ void CAntiHeavyTask::FallbackCommPos()
 		circuit->GetTerrainManager()->CanMoveToPos(leader->GetArea(), commander->GetPos(frame)))
 	{
 		for (CCircuitUnit* unit : units) {
-			unit->GetTravelAct()->StateWait();
+			if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+				unit->GetTravelAct()->StateWait();
+			}
 			unit->Guard(commander, frame + FRAMES_PER_SEC * 60);
 		}
 		return;
@@ -496,7 +505,9 @@ void CAntiHeavyTask::FallbackCommPos()
 
 	position = circuit->GetSetupManager()->GetBasePos();
 	for (CCircuitUnit* unit : units) {
-		unit->GetTravelAct()->StateWait();
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->StateWait();
+		}
 		TRY_UNIT(circuit, unit,
 			unit->CmdFightTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 		)

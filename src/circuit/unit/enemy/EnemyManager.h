@@ -72,6 +72,10 @@ public:
 
 	void UnregisterEnemyUnit(CEnemyUnit* data);
 	void DyingEnemy(CEnemyUnit* enemy, int frame);
+	void PurgeStaleGhosts(int frame, int confirmedAgeFrames, int unknownAgeFrames);
+	float GetEnemyAirCostNear(const springai::AIFloat3& pos, float radius) const;
+	// apex: longest weapon range in a group -- danger radius depends on it.
+	float GetEnemyGroupRange(int idx) const;
 private:
 	void DyingEnemy(CEnemyUnit* enemy);
 	void DeleteEnemyUnit(CEnemyUnit* data);
@@ -83,6 +87,11 @@ public:
 	float GetEnemyThreat(CCircuitDef::RoleT type) const {
 		return enemyInfos[type].threat;
 	}
+	// Only enemies seen within freshFrames. GetEnemyCost never forgets anything.
+	float GetEnemyCostFresh(CCircuitDef::RoleT type) const {
+		return freshInfos[type].cost;
+	}
+	void SetFreshSeconds(float seconds);
 	void AddEnemyCost(const CEnemyUnit* e);
 	void DelEnemyCost(const CEnemyUnit* e);
 	float GetMobileThreat() const { return mobileThreat; }
@@ -103,6 +112,14 @@ public:
 
 	void ReadConfig();
 private:
+	struct SEnemyInfo {
+		float cost;
+		float threat;
+	};
+	void ModCost(const CEnemyUnit* e, int sign, SEnemyInfo* infos, float& mobCost, float& mobThr);
+	void ModStatic(const CEnemyUnit* e, int sign);
+	void ModFresh(const CEnemyUnit* e, int sign);
+
 	void KMeansIteration();
 
 	struct SGroupData {
@@ -152,11 +169,14 @@ private:
 		float inStatic;
 	} initThrMod;
 	float maxAAThreat = 0.f;
-	struct SEnemyInfo {
-		float cost;
-		float threat;
-	};
 	std::array<SEnemyInfo, CMaskHandler::GetMaxMasks()> enemyInfos;
+
+	// Parallel bucket holding only enemies seen recently, kept consistent by the
+	// same Add/Del pairs as enemyInfos via the IsFresh() flag on the unit.
+	std::array<SEnemyInfo, CMaskHandler::GetMaxMasks()> freshInfos;
+	float freshMobileCost = 0.f;
+	float freshMobileThreat = 0.f;
+	int freshFrames = 30 * 60;  // FRAMES_PER_SEC * 60, re-set in the ctor
 
 	bool isAreaUpdated;
 	std::unordered_set<const terrain::SArea*> enemyAreas;

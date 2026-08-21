@@ -68,7 +68,7 @@ void CBombTask::AssignTo(CCircuitUnit* unit)
 	int squareSize = manager->GetCircuit()->GetPathfinder()->GetSquareSize();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	ITravelAction* travelAction;
-	if (cdef->IsAttrSiege()) {
+	if (cdef->IsAttrSiege() && (manager->GetCircuit()->GetTunable("apex_siege_fight", 1.f) > 0.f)) {
 		travelAction = new CFightAction(unit, squareSize);
 	} else {
 		travelAction = new CMoveAction(unit, squareSize);
@@ -92,7 +92,9 @@ void CBombTask::Start(CCircuitUnit* unit)
 		return;
 	}
 	if (!pPath->posPath.empty()) {
-		unit->GetTravelAct()->SetPath(pPath);
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->SetPath(pPath, lowestSpeed);
+		}
 	}
 }
 
@@ -143,7 +145,9 @@ void CBombTask::Update()
 			CCircuitAI* circuit = manager->GetCircuit();
 			int frame = circuit->GetLastFrame() + FRAMES_PER_SEC * 60;
 			for (CCircuitUnit* unit : units) {
-				unit->GetTravelAct()->StateWait();
+				if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+					unit->GetTravelAct()->StateWait();
+				}
 				TRY_UNIT(circuit, unit,
 					unit->CmdFightTo(groupPos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame);
 				)
@@ -210,10 +214,7 @@ void CBombTask::OnUnitIdle(CCircuitUnit* unit)
 	const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
 	if (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist)) {
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		float x = rand() % terrainMgr->GetTerrainWidth();
-		float z = rand() % terrainMgr->GetTerrainHeight();
-		position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
-		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
+		position = RoamPos(leader);
 	}
 
 	if (units.find(unit) != units.end()) {
@@ -294,9 +295,15 @@ void CBombTask::FindTarget()
 		if (edef != nullptr) {
 			// apex: ANTI_STAT skipped every mobile enemy, which excluded
 			// constructors -- the highest-value target for an eco raid. Builders
-			// and commanders stay eligible; other mobiles are still skipped.
+			// and commanders stay eligible; other mobiles are still skipped --
+			// EXCEPT the Behemoth class: a heavy-role mobile above
+			// apex_bomb_fat_mobile metal is a walking reactor, and bombers are
+			// one of its three direct counters (apexearth). The value-per-HP
+			// scoring then ranks it against static eco on its own merits.
+			const bool fatMobile = edef->IsRoleHeavy()
+					&& (edef->GetCostM() >= circuit->GetTunable("apex_bomb_fat_mobile", 4000.f));
 			const bool skipMobile = isAntiStatic && edef->IsMobile()
-					&& !edef->IsRoleBuilder() && !edef->IsRoleComm();
+					&& !edef->IsRoleBuilder() && !edef->IsRoleComm() && !fatMobile;
 			if ((edef->GetSpeed() > speed)
 				|| skipMobile
 				|| circuit->GetCircuitDef(edef->GetId())->IsIgnore())
@@ -345,7 +352,18 @@ void CBombTask::FindTarget()
 			// reactor beats an extractor and a near target beats a far one of
 			// equal worth. The floor stops a bomber committing to anything under
 			// apex_bomb_min_value metal while something better exists.
-			const float value = (edef != nullptr) ? edef->GetCostM() : 0.f;
+			float value = (edef != nullptr) ? edef->GetCostM() : 0.f;
+			// A NANOFRAME IS NOT THE BUILDING. GetCostM prices the finished
+			// def, and a frame's low health then made it the best-looking
+			// target on the map -- apexearth, watching a raid: "we bombed the
+			// one being built which doesn't explode when killed!" Worth only
+			// the invested share: approximate by health fraction of the def's
+			// full health, which also kills the low-health score inflation
+			// (value and health shrink together). The finished AFUS beside it
+			// keeps its full price and its death blast.
+			if ((edef != nullptr) && enemy->IsBeingBuilt()) {
+				value *= health / std::max(edef->GetHealth(), 1.f);
+			}
 			const float sqDist = pos.SqDistance2D(ePos);
 			const float minValue = circuit->GetTunable("apex_bomb_min_value", 200.f);
 			const float distScale = circuit->GetTunable("apex_bomb_dist_scale", 4000.f);
@@ -424,7 +442,9 @@ void CBombTask::Fallback()
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
-		unit->GetTravelAct()->StateWait();
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->StateWait();
+		}
 		TRY_UNIT(circuit, unit,
 			unit->CmdFightTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 			unit->CmdWantedSpeed(lowestSpeed);

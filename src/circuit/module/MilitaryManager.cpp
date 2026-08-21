@@ -16,10 +16,12 @@
 #include "script/MilitaryScript.h"
 #include "setup/SetupManager.h"
 #include "setup/DefenceData.h"
+#include "task/UnitTask.h"
 #include "task/NilTask.h"
 #include "task/IdleTask.h"
 #include "task/RetreatTask.h"
 #include "task/builder/DefenceTask.h"
+#include "task/fighter/FighterTask.h"
 #include "task/fighter/RallyTask.h"
 #include "task/fighter/GuardTask.h"
 #include "task/fighter/DefendTask.h"
@@ -73,6 +75,36 @@ CMilitaryManager::~CMilitaryManager()
 {
 }
 
+#if CIRCUIT_TASK_REGISTRY
+namespace {
+// True when `task` is not a live object, in which case the caller must avoid
+// EVERY dereference of it -- the vtable fetch is the fault. Nothing here reads
+// *task: the names come from what the registry recorded while it was alive.
+bool IsTaskStale(CCircuitAI* circuit, CCircuitUnit* unit, const IUnitTask* task,
+		const char* at)
+{
+	const IUnitTask::SLiveness live = IUnitTask::Probe(task);
+	if (live.live) {
+		return false;
+	}
+	static int staleHits = 0;  // AI event path is single-threaded
+	const int n = ++staleHits;
+	if ((n <= 20) || (n % 100 == 0)) {
+		const int frame = circuit->GetLastFrame();
+		circuit->LOG("apex STALETASK: at=%s unit=%s id=%i taskFrame=%i frame=%i"
+				" age=%i task=%p lastType=%s/%s known=%i hits=%i",
+				at, unit->GetCircuitDef()->GetDef()->GetName(), unit->GetId(),
+				unit->GetTaskFrame(), frame, frame - unit->GetTaskFrame(),
+				(const void*)task, IUnitTask::TypeName(live.type),
+				(live.type == IUnitTask::Type::FIGHTER)
+						? IFighterTask::FightTypeName(live.sub) : "-",
+				int(live.known), n);
+	}
+	return true;
+}
+} // namespace
+#endif
+
 void CMilitaryManager::InitHandlers()
 {
 	/*
@@ -117,14 +149,43 @@ void CMilitaryManager::InitHandlers()
 	auto attackerIdleHandler = [this](CCircuitUnit* unit) {
 		// NOTE: Avoid instant task reassignment, though it may be not relevant for attackers
 		if (this->circuit->GetLastFrame() > unit->GetTaskFrame()/* + FRAMES_PER_SEC*/) {
-			unit->GetTask()->OnUnitIdle(unit);
+			IUnitTask* task = unit->GetTask();
+#if CIRCUIT_TASK_REGISTRY
+			if (IsTaskStale(this->circuit, unit, task, "idle")) {
+				return;  // survive and keep logging, instead of faulting on the vtable
+			}
+#endif
+			task->OnUnitIdle(unit);
 		}
 	};
-	auto attackerDamagedHandler = [](CCircuitUnit* unit, CEnemyInfo* attacker) {
-		unit->GetTask()->OnUnitDamaged(unit, attacker);
+	auto attackerDamagedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
+		IUnitTask* task = unit->GetTask();
+#if CIRCUIT_TASK_REGISTRY
+		if (IsTaskStale(this->circuit, unit, task, "damaged")) {
+			return;  // nothing to unwind here; the handler only forwards
+		}
+#endif
+		task->OnUnitDamaged(unit, attacker);
 	};
 	auto attackerDestroyedHandler = [this](CCircuitUnit* unit, CEnemyInfo* attacker) {
 		IUnitTask* task = unit->GetTask();
+#if CIRCUIT_TASK_REGISTRY
+		if (IsTaskStale(this->circuit, unit, task, "destroyed")) {
+			// Skip the two task calls and the NIL test -- all three read *task.
+			// The accounting below still has to run: attackerCreatedHandler
+			// already did AddArmyCost/army.insert for this unit, and the NIL
+			// branch only fires when OnUnitDestroyed changed the task, which
+			// cannot have happened when it was never called. Returning early
+			// instead would leave army cost inflated for the rest of the game.
+			DelArmyCost(unit);
+			army.erase(unit);
+			if (unit->GetCircuitDef()->IsAttrStock()) {
+				stockpilers.erase(unit);
+			}
+			UnitRemoved(unit, UseAs::COMBAT);
+			return;
+		}
+#endif
 		task->OnUnitDestroyed(unit, attacker);  // can change task
 		unit->GetTask()->RemoveAssignee(unit);  // Remove unit from IdleTask
 
@@ -677,7 +738,7 @@ IFighterTask* CMilitaryManager::Enqueue(const TaskF::SFightTask& ti)
 	}
 
 	fightTasks[static_cast<IFighterTask::FT>(ti.type)].insert(task);
-	updateTasks.push_back(task);
+	PushUpdate(task);
 	TaskAdded(task);
 	return task;
 }
@@ -713,7 +774,7 @@ bool CMilitaryManager::IsRecentSuperTarget(const AIFloat3& pos, float sqRadius, 
 CRetreatTask* CMilitaryManager::EnqueueRetreat()
 {
 	CRetreatTask* task = new CRetreatTask(this);
-	updateTasks.push_back(task);
+	PushUpdate(task);
 	TaskAdded(task);
 	return task;
 }
@@ -912,9 +973,38 @@ void CMilitaryManager::DefaultMakeDefence(int cluster, const AIFloat3& pos)
 	std::pair<AIFloat3*, int> poses[3] = {std::make_pair(frontPoses, 0), std::make_pair(middlePoses, 0), std::make_pair(backPoses, 0)};
 
 	CEnemyManager* enemyMgr = circuit->GetEnemyManager();
+	// apex: RETIRE THE BOTTOM OF THE LADDER WHEN THE TOP IS POCKET CHANGE.
+	// Every defence point starts at defenders[0] and climbs, so a fresh point
+	// bought a Sentry, a Beamer and a Dragon's Claw at any income -- maxCost
+	// bounds the TOP of the ladder and never the bottom (apexearth, at 700
+	// metal/s: "they are a waste of space... OBSOLETE at this point").
+	// Obsolete is his own definition, both halves: the best rung is trivially
+	// affordable, AND this rung is far cheaper than it. Neither a clock nor a
+	// tech test -- at low income the top rung is not affordable and the whole
+	// ladder still gets built.
+	CCircuitDef* topDef = nullptr;
+	for (unsigned i = 0; i < num; ++i) {
+		if (defenders[i]->IsAvailable(frame) && !defenders[i]->IsRoleAA()) {
+			if ((topDef == nullptr) || (defenders[i]->GetCostM() > topDef->GetCostM())) {
+				topDef = defenders[i];
+			}
+		}
+	}
+	const float obsSecs = circuit->GetTunable("apex_porc_obsolete_secs", 20.f);
+	const float obsRatio = circuit->GetTunable("apex_porc_obsolete_ratio", 7.f);
+	// Armada's ladder is 85/190/340/440/680/3500: at ratio 7 the Pulsar retires
+	// everything up to Overwatch and keeps the Pit Bull, which is the set
+	// apexearth named as obsolete against the T2+ guns he wants instead.
+	const bool retireCheap = (topDef != nullptr)
+			&& (topDef->GetCostM() < metalIncome * obsSecs);
 	for (unsigned i = 0; i < num; ++i) {
 		CCircuitDef* defDef = defenders[i];
 		if (!defDef->IsAvailable(frame) || (defDef->IsRoleAA() && (enemyMgr->GetEnemyCost(ROLE_TYPE(AIR)) < 1.f))) {
+			continue;
+		}
+		if (retireCheap && !defDef->IsRoleAA()
+			&& (defDef->GetCostM() * obsRatio < topDef->GetCostM()))
+		{
 			continue;
 		}
 		totalCost += defDef->GetCostM();
@@ -941,7 +1031,15 @@ void CMilitaryManager::DefaultMakeDefence(int cluster, const AIFloat3& pos)
 		}
 	}
 
-	// Build sensors
+	MakeSensors(backPos, maxCost, isPorc ? 1 / 4.f : 1 / SQRT_2, isWater);
+}
+
+void CMilitaryManager::MakeSensors(const AIFloat3& backPos, float maxCost, float radiusMod, bool isWater)
+{
+	const int frame = circuit->GetLastFrame();
+	CBuilderManager* builderMgr = circuit->GetBuilderManager();
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+
 	auto checkSensor = [this, frame, maxCost, &backPos, builderMgr, terrainMgr](IBuilderTask::BuildType type,
 			CCircuitDef* cdef, float range, std::function<bool (CCircuitDef*)> isSensor)
 	{
@@ -967,7 +1065,6 @@ void CMilitaryManager::DefaultMakeDefence(int cluster, const AIFloat3& pos)
 	};
 	// radar
 	if (radarDefs.HasAvail()) {
-		const float radiusMod = isPorc ? 1 / 4.f : 1 / SQRT_2;
 		radarDefs.GetBestDef([&checkSensor, radiusMod](CCircuitDef* cdef, const SSensorExt& data) {
 			return checkSensor(IBuilderTask::BuildType::RADAR, cdef, data.radius * radiusMod,
 					[](CCircuitDef* cdef) { return cdef->IsRadar(); });
@@ -980,6 +1077,31 @@ void CMilitaryManager::DefaultMakeDefence(int cluster, const AIFloat3& pos)
 					[](CCircuitDef* cdef) { return cdef->IsSonar(); });
 		});
 	}
+}
+
+void CMilitaryManager::DefaultMakeSensors(int cluster, const AIFloat3& pos)
+{
+	assert(cluster >= 0);
+	if (!radarDefs.HasAvail() && !sonarDefs.HasAvail()) {
+		return;
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	if (terrainMgr->IsZoneAlly(pos)) {
+		return;
+	}
+
+	CEconomyManager* em = circuit->GetEconomyManager();
+	const float metalIncome = std::min(em->GetAvgMetalIncome(), em->GetAvgEnergyIncome()) * em->GetEcoFactor();
+	const float maxCost = amountFactor * metalIncome;
+
+	const CDefenceData::SDefPoint* pnt = FindClosestDefPoint(cluster, pos);
+	const AIFloat3& anchor = (pnt == nullptr) ? pos : pnt->position;
+	AIFloat3 backPos = anchor - (circuit->GetEnemyManager()->GetEnemyPos() - pos).Normalize2D() * (SQUARE_SIZE * 10);
+	CTerrainManager::CorrectPosition(backPos);
+
+	const bool isWater = !terrainMgr->IsWaterAVoid()
+			&& (circuit->GetMap()->GetElevationAt(pos.x, pos.z) < -SQUARE_SIZE * 2);
+	MakeSensors(backPos, maxCost, 1 / SQRT_2, isWater);
 }
 
 void CMilitaryManager::MarkPorc(CCircuitUnit* unit, int defPointId)
@@ -1189,12 +1311,11 @@ AIFloat3 CMilitaryManager::GetDefenceStand()
 // ends up garrisoning the base while a border base burns.
 bool CMilitaryManager::GetGuardAnchor(AIFloat3& outPos) const
 {
-	// A leak behind the line outranks the line. GetAttackHotspot is the
-	// cost-weighted decaying centroid of OUR OWN losses, so it points at the
-	// fighting rather than at geometry. It is a centroid of every loss though,
-	// including an army dying on the far side of the map, so it is only followed
-	// where we are not the weaker side -- otherwise the garrison marches into the
-	// enemy base to defend it.
+	// A leak behind the line outranks the line. GetAttackHotspot is the heaviest
+	// of OUR OWN decaying loss spots, so it points at the fighting rather than at
+	// geometry. That spot can be an army dying on the far side of the map, so it
+	// is only followed where we are not the weaker side -- otherwise the garrison
+	// marches into the enemy base to defend it.
 	AIFloat3 hot;
 	float weight;
 	if (circuit->GetAttackHotspot(hot, weight) && circuit->IsPosOnMap(hot)
@@ -1210,6 +1331,54 @@ bool CMilitaryManager::GetGuardAnchor(AIFloat3& outPos) const
 	return false;
 }
 
+// The same question asked from ONE pool's position: which unanswered breach is
+// worth this pool walking to. Spots are scored by the threat still standing on
+// them minus what has already been sent, over the distance to get there, so two
+// pools take two breaches instead of both taking the heaviest one.
+bool CMilitaryManager::GetGuardAnchor(const AIFloat3& from, const std::vector<float>& assigned,
+		AIFloat3& outPos, int& outSpot) const
+{
+	outSpot = -1;
+	if (!utils::is_valid(from)) {
+		return false;
+	}
+	const std::vector<CCircuitAI::SHotSpot>& spots = circuit->GetHotSpots();
+	if (spots.empty()) {
+		return false;
+	}
+	CThreatMap* threatMap = circuit->GetThreatMap();
+	CInfluenceMap* inflMap = circuit->GetInflMap();
+	const float squareSize = float(threatMap->GetSquareSize());
+
+	float bestScore = .0f;
+	for (unsigned i = 0; i < spots.size(); ++i) {
+		const CCircuitAI::SHotSpot& spot = spots[i];
+		if ((spot.weight < HOT_MIN_WEIGHT) || !circuit->IsPosOnMap(spot.pos)) {
+			continue;
+		}
+		// Same gate as the single-anchor version: a spot on ground we do not hold
+		// is a fight we are losing elsewhere, not a breach to garrison.
+		if (inflMap->GetInfluenceAt(spot.pos) <= -INFL_EPS) {
+			continue;
+		}
+		const float already = (i < assigned.size()) ? assigned[i] : .0f;
+		const float remaining = threatMap->GetThreatAt(spot.pos) - already;
+		if (remaining <= .0f) {
+			continue;
+		}
+		const float score = remaining / (from.distance2D(spot.pos) + squareSize);
+		if (score > bestScore) {
+			bestScore = score;
+			outSpot = int(i);
+		}
+	}
+	if (outSpot < 0) {
+		return false;
+	}
+	outPos = spots[outSpot].pos;
+	return true;
+}
+
 void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 {
 	outPositions.clear();
@@ -1217,7 +1386,16 @@ void CMilitaryManager::FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	SArea* area = unit->GetArea();
 	AIFloat3 anchor;
-	if (GetGuardAnchor(anchor) && terrainMgr->CanMoveToPos(area, anchor)) {
+	// Both callers reach here with no target of their own, so an ATTACK squad
+	// rallies on the same per-pool anchor a garrison does. A squad that HAS a
+	// target never comes through here.
+	int spot = -1;
+	const std::vector<float> none;
+	// GetThreatAt reads whichever layer was selected last; select this unit's.
+	circuit->GetThreatMap()->SetThreatType(unit);
+	const bool hasAnchor = GetGuardAnchor(unit->GetPos(circuit->GetLastFrame()), none, anchor, spot)
+			|| GetGuardAnchor(anchor);
+	if (hasAnchor && terrainMgr->CanMoveToPos(area, anchor)) {
 		outPositions.push_back(anchor);
 		return;
 	}
@@ -1551,12 +1729,43 @@ void CMilitaryManager::UpdateDefenceTasks()
 	// agree: where we are being hit, else the front. Only while the task has no
 	// target of its own -- an engaged task writes its target into position and
 	// must not be pulled off it.
-	AIFloat3 anchor;
-	const bool hasAnchor = GetGuardAnchor(anchor);
+	//
+	// PER POOL, not one anchor for all of them. Every garrison used to be sent to
+	// the single heaviest point, so two breaches at once pulled the whole army to
+	// one of them (or, when it was a centroid, to a point between them that was
+	// neither). Heaviest pool picks first and its power is subtracted from that
+	// spot's demand, so the next pool prefers the next-worst breach. With one
+	// fight running there is one spot and this is the old behaviour exactly.
+	std::vector<CDefendTask*> defTasks;
+	defTasks.reserve(tasks.size());
 	for (IFighterTask* task : tasks) {
-		CDefendTask* dt = static_cast<CDefendTask*>(task);
-		if (hasAnchor && (dt->GetTarget() == nullptr)) {
-			dt->SetPosition(anchor);
+		defTasks.push_back(static_cast<CDefendTask*>(task));
+	}
+	std::sort(defTasks.begin(), defTasks.end(), [](const CDefendTask* a, const CDefendTask* b) {
+		return a->GetAttackPower() > b->GetAttackPower();
+	});
+	std::vector<float> assigned(circuit->GetHotSpots().size(), .0f);
+	AIFloat3 fallback;
+	const bool hasFallback = GetGuardAnchor(fallback);
+	const int frame = circuit->GetLastFrame();
+	for (CDefendTask* dt : defTasks) {
+		if (dt->GetTarget() == nullptr) {
+			CCircuitUnit* leader = dt->GetLeader();
+			const AIFloat3& from = (leader != nullptr) ? dt->GetLeaderPos(frame) : dt->GetPosition();
+			if (leader != nullptr) {
+				// GetThreatAt reads whichever layer was selected last.
+				circuit->GetThreatMap()->SetThreatType(leader);
+			}
+			AIFloat3 anchor;
+			int spot = -1;
+			if (GetGuardAnchor(from, assigned, anchor, spot)) {
+				dt->SetPosition(anchor);
+				if (spot < int(assigned.size())) {
+					assigned[spot] += dt->GetAttackPower();
+				}
+			} else if (hasFallback) {
+				dt->SetPosition(fallback);
+			}
 		}
 //		STerrainMapArea* area = dt->GetLeader()->GetArea();
 //		CMetalData::PointPredicate predicate = [em, tm, area, &spots, &clusters](const int index) {
@@ -1951,7 +2160,7 @@ IUnitTask* CMilitaryManager::DefaultMakeTask(CCircuitUnit* unit)
 }
 
 // Share of energy income the commander's cloak may consume.
-#define COMM_CLOAK_SHARE	0.1f
+#define COMM_CLOAK_SHARE_DEF	0.5f
 
 // The moving cost is what bites: corcom is 100 e/s standing and 1000 e/s moving,
 // and CCircuitDef takes the max of the two, so cloak is affordable only above
@@ -1969,8 +2178,17 @@ bool CMilitaryManager::IsCommCloakWanted(CCircuitUnit* unit) const
 		return false;
 	}
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
+	// apex: the share is the whole rule, and 0.1 against the MOVING cost put
+	// the bar at 10,000 e/s -- an income most games never reach, so "always
+	// cloaked when rich" never happened and commanders stayed visible.
+	// Half our energy income is the bar instead: at 2,000 e/s a corcom's
+	// 1,000 e/s moving cloak is affordable, which is the state apexearth means
+	// by late game. The stall guard above is what stops a poor commander
+	// walking around cloaked on an empty bank -- that half still holds.
+	const float share = circuit->GetTunable("apex_comm_cloak_share",
+			COMM_CLOAK_SHARE_DEF);
 	return !economyMgr->IsEnergyStalling()
-			&& (cdef->GetCloakCost() < economyMgr->GetAvgEnergyIncome() * COMM_CLOAK_SHARE);
+			&& (cdef->GetCloakCost() < economyMgr->GetAvgEnergyIncome() * share);
 }
 
 // Cloak is switched on once when a unit finishes and nothing outside a retreat

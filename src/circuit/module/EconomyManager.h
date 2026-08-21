@@ -124,9 +124,18 @@ public:
 	// apex: spot queries a script can call safely. FindOpenMexSpot applies the
 	// same guards UpdateMetalTasks does; EnqueueMexAt is the only way to create
 	// a MEX task from script that carries a real spotId.
-	int FindOpenMexSpot(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	int FindOpenMexSpot(CCircuitUnit* unit, const springai::AIFloat3& pos, float maxThreat = THREAT_MIN);
 	springai::AIFloat3 GetMexSpotPos(int spotId) const;
 	IBuilderTask* EnqueueMexAt(CCircuitUnit* unit, int spotId);
+	// apex: same pattern as the mex trio above, for geo vents -- HomeEnergy had
+	// no way to see a geo spot at all, so geothermal (very high energy/metal,
+	// GetEnergyMake already prices it correctly) never entered its ranking.
+	// Unlike FindOpenMexSpot this does NOT exclude ally-zone ground: a geo vent
+	// sitting inside our own base is exactly the case we want, not a frontier
+	// reroute.
+	int FindOpenGeoSpot(CCircuitUnit* unit, const springai::AIFloat3& pos);
+	springai::AIFloat3 GetGeoSpotPos(int spotId) const;
+	IBuilderTask* EnqueueGeoAt(CCircuitUnit* unit, int spotId);
 	bool IsIgnorePull(const IBuilderTask* task) const;
 	bool IsIgnoreStallingPull(const IBuilderTask* task) const;
 	void CorrectResourcePull(float metal, float energy);
@@ -208,6 +217,16 @@ private:
 	std::vector<SResSpot> mexSpots;  // AI-local metal info
 	int mexCount;
 	std::vector<SResSpot> geoSpots;
+	// apex: geo vents scouted after init. ParseGeoSpots reads GetFeatures()
+	// once at AI birth, and that callback is LOS-limited -- most maps register
+	// ZERO vents forever (measured: spot=-1 for a whole 30m game with open
+	// vents on the map). Late discoveries append here per-instance -- the
+	// shared CEnergyData is never mutated, other AI threads read it
+	// concurrently -- and geoSpots grows with them, so spot ids stay stable.
+	std::vector<springai::AIFloat3> lateGeoSpots;
+	int nextGeoRescan = 0;
+	const springai::AIFloat3& GeoSpotPos(int spotId) const;
+	void RescanGeoSpots();
 
 	struct SMetalExt {
 		float speed;

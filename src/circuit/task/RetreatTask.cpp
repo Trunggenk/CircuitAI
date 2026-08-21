@@ -23,6 +23,7 @@
 #include "unit/action/MoveAction.h"
 #include "unit/action/FightAction.h"
 #include "CircuitAI.h"
+#include <limits>
 #include "util/Utils.h"
 
 #include "AISCommands.h"
@@ -140,9 +141,11 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 	float range;
 
 	if (unit->GetTravelAct()->GetPath() == nullptr) {
-		std::shared_ptr<CPathInfo> pPath = std::make_shared<CPathInfo>();
+		std::shared_ptr<CPathInfo> pPath = std::shared_ptr<CPathInfo>(new CPathInfo());
 		pPath->PushPos(startPos, pathfinder);
-		unit->GetTravelAct()->SetPath(pPath);
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->SetPath(pPath);
+		}
 	}
 
 	bool isNoEndPos = true;
@@ -226,9 +229,17 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 	}
 
 //	const float minThreat = circuit->GetThreatMap()->GetUnitThreat(unit) * 0.125f;
+	// apex: a WOUNDED unit weighted threat at the neutral 1.0 -- LESS than a
+	// healthy attacking squad's 2.0 -- so retreats beelined home through the
+	// enemy: measured live 2026-08-19, RETREAT tasks were the largest mobile
+	// combat death bucket, 39.4k metal / 371 units in one 20m game ("solo
+	// dudes walking into enemy groups"). High mod, no ceiling: the path bends
+	// hard around danger but can never fail to exist.
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			unit, circuit->GetThreatMap(),
-			startPos, endPos, range/*, nullptr, minThreat*/);
+			startPos, endPos, range, nullptr,
+			std::numeric_limits<float>::max(), false,
+			circuit->GetTunable("apex_retreat_threat_mod", 4.f));
 	pathQueries[unit] = query;
 
 	pathfinder->RunQuery(circuit->GetScheduler().get(), query, [this](const IPathQuery* query) {
@@ -245,21 +256,36 @@ void CRetreatTask::Start(CCircuitUnit* unit)
 // forward of home.
 #define RALLY_FRAC	0.55f
 
-// A fighter falls back to ONE shared point, not to whichever haven happens to
-// be nearest it. GetClosestHaven is per-unit and havens are factory positions,
-// so a retreating squad fanned out to several places at the back of the map and
-// then walked all the way forward again. apexearth, watching: "each of our
-// units, as they pull back, it looks to me like they're pulling back to
-// different locations... a perfectly healthy set of units took the long walk
-// away from the front line, and now they're walking all the way back."
+// The health at which Update() below hands the unit back. Nothing else releases
+// it, so the rally-point gate reads the same constant.
+#define RETREAT_HEALED	0.98f
+
+// A fighter that is not hurt falls back to ONE shared point, not to whichever
+// haven happens to be nearest it. GetClosestHaven is per-unit and havens are
+// factory positions, so a retreating squad fanned out to several places at the
+// back of the map and then walked all the way forward again. apexearth,
+// watching: "each of our units, as they pull back, it looks to me like they're
+// pulling back to different locations... a perfectly healthy set of units took
+// the long walk away from the front line, and now they're walking all the way
+// back."
 //
-// Builders and the commander are excluded: they retreat to be repaired or to
-// hide, and a rally point in front of the base serves neither.
+// Builders, the commander and anything damaged are excluded: they retreat to be
+// repaired or to hide, and a rally point in front of the base serves neither.
 AIFloat3 CRetreatTask::GetRallyPos(CCircuitUnit* unit) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	if (cdef->IsRoleComm() || (circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(BUILDER))) {
+		return -RgtVector;
+	}
+
+	// A haven is a nano turret's patrol position, so it repairs whatever stands
+	// on it; the defence stand is towers and the rally point is bare ground, and
+	// neither ends the retreat. Damage therefore defers to the haven, and the
+	// rally point is used only when no haven is reachable.
+	if ((unit->GetHealthPercent() <= RETREAT_HEALED)
+		&& utils::is_valid(circuit->GetFactoryManager()->GetClosestHaven(unit)))
+	{
 		return -RgtVector;
 	}
 
@@ -296,10 +322,19 @@ AIFloat3 CRetreatTask::GetRallyPos(CCircuitUnit* unit) const
 // Push the destination directly away from the enemy centroid instead. Only for
 // the commander: everything else retreats to be repaired, and a repair pad
 // behind the base is no use to it.
+//
+// The push applies to the base-centre case ONLY. A haven is an assistant's own
+// position -- GetAssistRange is that unit's build distance -- so standing on it
+// is the free repair, and COMM_REAR_DIST puts the commander outside it. Update()
+// will not release a commander below its own retreat threshold, so a commander
+// pushed out of repair range is held until idle autoheal carries it there.
 AIFloat3 CRetreatTask::GetRearHaven(CCircuitUnit* unit, const AIFloat3& haven) const
 {
 	CCircuitAI* circuit = manager->GetCircuit();
 	if (!unit->GetCircuitDef()->IsRoleComm()) {
+		return haven;
+	}
+	if (utils::is_valid(circuit->GetFactoryManager()->GetClosestHaven(unit))) {
 		return haven;
 	}
 
@@ -329,11 +364,25 @@ void CRetreatTask::Update()
 	for (CCircuitUnit* unit : assignees) {
 		const float healthPerc = unit->GetHealthPercent();
 		bool isRepaired = unit->HasShield()
-				? (healthPerc > 0.98f) && unit->IsShieldCharged(circuit->GetSetupManager()->GetFullShield())
-				: healthPerc > 0.98f;
+				? (healthPerc > RETREAT_HEALED) && unit->IsShieldCharged(circuit->GetSetupManager()->GetFullShield())
+				: healthPerc > RETREAT_HEALED;
 
 		CCircuitDef* cdef = unit->GetCircuitDef();
-		if (isRepaired && !unit->IsDisarmed(frame)) {
+		// apex: excluded the commander. isRepaired is a pure HP-percentage
+		// check (RETREAT_HEALED=0.98) with NO influence/safety read at all --
+		// correct for a unit that fled because it took damage, since healing
+		// back up really does mean "done fleeing". The commander flees on
+		// INFLUENCE (see rules_commander.as's flee-influence check), almost
+		// always still near-full HP the moment it starts, so isRepaired read
+		// true within 1-2 ticks of EVERY assignment regardless of whether the
+		// danger that triggered the flee was still there -- ending the
+		// retreat almost immediately, every time. This was the dominant cause
+		// of the fire-state-toggle/never-settles symptom (the low-worker-
+		// count haven shortcut fixed earlier the same night was a real but
+		// secondary contributor). Falls through to the branch below instead,
+		// which already gates the commander on real influence
+		// (GetEnemyInflAt < INFL_EPS), not just HP.
+		if (isRepaired && !unit->IsDisarmed(frame) && !cdef->IsRoleComm()) {
 			Recovered(unit);
 		} else if (unit->IsForceUpdate(frame) || isExecute) {
 			Start(unit);
@@ -372,7 +421,9 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 			return;
 		}
 		if (unit->GetTravelAct() != nullptr) {
-			unit->GetTravelAct()->StateFinish();
+			if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+				unit->GetTravelAct()->StateFinish();
+			}
 		}
 
 		unit->SetTaskFrame(frame);  // avoid UnitIdle on find_pad
@@ -417,7 +468,22 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		)
 		// TODO: Add fail counter?
 	} else {
-		if ((circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(BUILDER))
+		// apex: excluded the commander. This shortcut ends a retreat the
+		// moment a builder is merely near its haven, if the team has 2 or
+		// fewer workers left -- "we can't afford an idle builder, get back to
+		// work" -- with no check that the haven is actually safe. For the
+		// commander that fights directly against the script's own flee-
+		// influence watchdog (rules_commander.as/events.as): forced back onto
+		// retreat, travels near haven, immediately Recovered() here
+		// regardless of danger, goes idle, re-forced ~3s later by the
+		// watchdog, repeat -- measured 2026-08-15 firing continuously for a
+		// full 28-minute match (noTask climbing in lockstep with the forced
+		// counter, never settling). A low worker count is exactly when the
+		// commander is most likely to BE one of only a few builders left,
+		// so this condition is trivially satisfied in the scenario that
+		// matters most.
+		if (!cdef->IsRoleComm()
+			&& (circuit->GetBindedRole(cdef->GetMainRole()) == ROLE_TYPE(BUILDER))
 			&& (circuit->GetBuilderManager()->GetWorkerCount() <= 2))
 		{
 			Recovered(unit);
@@ -462,7 +528,9 @@ void CRetreatTask::OnUnitIdle(CCircuitUnit* unit)
 		}
 
 		if (unit->GetTravelAct() != nullptr) {
-			unit->GetTravelAct()->StateFinish();
+			if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+				unit->GetTravelAct()->StateFinish();
+			}
 		}
 		state = State::REGROUP;
 	}
@@ -488,7 +556,9 @@ void CRetreatTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 		unit->PushTravelAct(travelAction);
 		unit->SetAllowedToJump(cdef->IsAbleToJump() && !cdef->IsAttrNoJump());
 	}
-	unit->GetTravelAct()->StateActivate();
+	if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+		unit->GetTravelAct()->StateActivate();
+	}
 
 	Start(unit);
 }
@@ -500,6 +570,13 @@ void CRetreatTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 
 void CRetreatTask::CheckRepairer(CCircuitUnit* newRep)
 {
+	// A repair executor can reach this through IRepairTask::Execute while the
+	// retreat has already shed its last assignee (DoneTask pending) --
+	// *units.begin() on an empty set dereferenced end() and crashed a watched
+	// game at 19:49 (2026-08-15, inlined IsRoleComm on garbage).
+	if (units.empty()) {
+		return;
+	}
 	CCircuitUnit* unit = *units.begin();
 	if (unit->GetCircuitDef()->IsRoleComm()) {
 		return;
@@ -549,11 +626,19 @@ void CRetreatTask::ApplyPath(const CQueryPathSingle* query)
 {
 	const std::shared_ptr<CPathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
+	// The query completed AFTER the unit's actions were cleared (task switch
+	// or death): GetTravelAct() is null and SetPath through it crashed three
+	// identical tournament games (2026-08-15). The path is simply unwanted.
+	if ((unit == nullptr) || (unit->GetTravelAct() == nullptr)) {
+		return;
+	}
 
 	if (pPath->posPath.empty()) {
 		pPath->PushPos(query->GetEndPos(), manager->GetCircuit()->GetPathfinder());
 	}
-	unit->GetTravelAct()->SetPath(pPath);
+	if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+		unit->GetTravelAct()->SetPath(pPath);
+	}
 }
 
 CCircuitUnit* CRetreatTask::ValidateNewRepairer(const IPathQuery* query, int newRepId) const
@@ -578,6 +663,12 @@ void CRetreatTask::ApplyCostMap(const CQueryCostMap* query, CCircuitUnit* newRep
 	const int frame = circuit->GetLastFrame();
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	CCircuitUnit* unit = query->GetUnit();
+	// The query completed AFTER the unit's actions were cleared (task switch
+	// or death): GetTravelAct() is null and SetPath through it crashed three
+	// identical tournament games (2026-08-15). The path is simply unwanted.
+	if ((unit == nullptr) || (unit->GetTravelAct() == nullptr)) {
+		return;
+	}
 	AIFloat3 endPos;
 	float range;
 

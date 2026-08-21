@@ -21,6 +21,8 @@ public:
 
 	// Result
 	bool IsSafeLine(const springai::AIFloat3& startPos, const springai::AIFloat3& endPos) const;
+	// apex: same walk with a caller-chosen threat ceiling instead of THREAT_MIN.
+	bool IsSafeLine(const springai::AIFloat3& startPos, const springai::AIFloat3& endPos, float maxThreat) const;
 
 private:
 	int threatXSize = 0;

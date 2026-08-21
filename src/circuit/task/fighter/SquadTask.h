@@ -29,13 +29,6 @@ class CCircuitDef;
 // 0.9 packs a squad into a half circle; 1.2 is a broad crescent. NOT a ring --
 // apexearth: "we don't organize into balls, we organize into curves/lines".
 #define ARC_SPAN		0.9f
-// Rows fight at their OWN range, not 20% inside it. apexearth: "don't attack
-// at 80% range, attack at 95% range". At 0.8 a Banisher with 800 range stood
-// at 640 -- inside the tanks it is supposed to shoot over, and inside the
-// enemy's reach. Reverted once as part of a three-change formation batch that
-// regressed; the line-formation gather in that batch was the likely cause and
-// this was never tested alone.
-#define ATTACK_RANGE_MOD	0.95f
 // apexearth: "some units easily die on the first hit... if i am just 10% out
 // of range of that enemy unit, i absolutely must move away from them." Used
 // when the current target outranges a row's own weapon: stand at the
@@ -100,6 +93,14 @@ class CCircuitDef;
 #define CHARGE_THREAT_CEILING	1e9f
 // Spacing between neighbours on a regroup line, in elmos.
 #define LINE_SPACING		110.f
+// apexearth: "best would be if the hurt guys just move towards the back of
+// the pack." A unit IFighterTask::OnUnitDamaged marks a "coward" (health at
+// or below its retreat threshold, but still safely in the fight -- in LOS,
+// in range, threat tolerable) is not sent home; it stays in the squad and is
+// simply stood further out on its row's standoff ring than its healthy
+// squadmates, who are between it and the target on most bearings. Runtime:
+// apex_coward_rear_mod.
+#define COWARD_REAR_MOD		1.35f
 
 class ISquadTask: public IFighterTask {
 protected:
@@ -111,11 +112,21 @@ public:
 	virtual void RemoveAssignee(CCircuitUnit* unit) override;
 
 	virtual void Merge(ISquadTask* task);
+	virtual bool TrySquadRetreat(CCircuitUnit* unit) override;
+
+	// The last FindTarget pass's strongest strength-test refusal, as
+	// power/need. Measured (2026-08-16): median 0.82, 69% of refusal passes
+	// >= 0.7 -- squads walk away from fights one merge would win, and the
+	// merge check only ran every 32nd update. A near-miss accelerates it.
+	float lastRefused = .0f;
 
 	const std::map<float, std::set<CCircuitUnit*>>& GetRangeUnits() const { return rangeUnits; }
 
 	CCircuitUnit* GetLeader() const { return leader; }
 	const springai::AIFloat3& GetLeaderPos(int frame) const;
+	// Public because CSupportAction sizes an escort's standoff off it, and the
+	// action is not a member of the task.
+	float GetSpreadRadius() const;
 
 	// role heavy + attribute melee: corjugg (Behemoth), corkorg (Juggernaut),
 	// armbanth (Titan), armraz. All of them detonate on death, so the value is
@@ -132,10 +143,15 @@ private:
 protected:
 	ISquadTask* GetMergeTask();
 	springai::AIFloat3 LinePos(CCircuitUnit* unit, const springai::AIFloat3& centre) const;
-	float GetSpreadRadius() const;
 	float GetCohesionScale() const;
 	bool IsMustRegroup();
 	void ActivePath(float speed = NO_SPEED_LIMIT);
+	// apex: live power fraction -- attackPower is DEF power and never sees
+	// damage, so a mauled squad evaluated fights as if fresh (apexearth: "I
+	// still see us take on fights where we're outgunned"). Power-weighted
+	// health, 1.0 for a fresh squad. Promoted from CAttackTask so DEFEND and
+	// RAID odds use the same truth.
+	float GetHealthScale() const;
 	NSMicroPather::HitFunc GetHitTest() const;
 	void Attack(const int frame);
 	void Attack(const int frame, const bool isGround);

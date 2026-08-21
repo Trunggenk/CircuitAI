@@ -9,6 +9,8 @@
 #ifndef SRC_CIRCUIT_UTIL_ACTION_H_
 #define SRC_CIRCUIT_UTIL_ACTION_H_
 
+#include <cstddef>
+
 namespace circuit {
 
 class CActionList;
@@ -22,6 +24,13 @@ protected:
 	IAction(CActionList* owner);
 public:
 	virtual ~IAction();
+
+	// CRASH DIAGNOSTIC (temporary): guard-page allocation, same treatment as
+	// ICoreUnit/IRefCounter -- actions are raw-deleted (ClearAct/dtors) while
+	// dgunAct/travelAct-style raw pointers can outlive them. Defined in
+	// Action.cpp.
+	static void* operator new(std::size_t sz);
+	static void operator delete(void* p);
 
 	virtual void Update(CCircuitAI* circuit) = 0;
 	virtual void OnStart();

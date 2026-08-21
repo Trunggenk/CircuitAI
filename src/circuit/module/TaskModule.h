@@ -10,6 +10,7 @@
 
 #include "module/Module.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace circuit {
@@ -32,7 +33,13 @@ public:
 	void Release();
 
 	virtual void AssignTask(CCircuitUnit* unit, IUnitTask* task);
-	virtual void AssignTask(CCircuitUnit* unit);
+	// Returns the task it assigned, with ONE reference transferred to the
+	// caller (who must Release), or nullptr. Callers must use this return
+	// value, never re-read unit->GetTask() afterwards: assignment runs script
+	// (AiMakeTask, TaskAssigned), which can abort or complete tasks, leaving
+	// the unit's bare task pointer dangling -- crashed live at
+	// CIdleTask::Update 2026-08-15 through exactly that stale re-read.
+	virtual IUnitTask* AssignTask(CCircuitUnit* unit);
 protected:
 	virtual void DequeueTask(IUnitTask* task, bool done = false);
 
@@ -69,6 +76,15 @@ protected:
 	CIdleTask* idleTask;
 	CPlayerTask* playerTask;
 
+	// CRASH DIAGNOSTIC (temporary): all pushes go through PushUpdate so a
+	// duplicate listing — which the reaper would double-ClearRelease, the
+	// actionUnits disease all over again — traps AT THE PUSH that creates it.
+	void PushUpdate(IUnitTask* task) {
+		if (std::find(updateTasks.begin(), updateTasks.end(), task) != updateTasks.end()) {
+			__builtin_trap();
+		}
+		updateTasks.push_back(task);
+	}
 	std::vector<IUnitTask*> updateTasks;  // owner
 	unsigned int updateIterator;
 

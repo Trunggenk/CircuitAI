@@ -31,7 +31,7 @@ void CQueryPathWide::InitQuery(const AIFloat3& startPos, const AIFloat3& endPos,
 
 void CQueryPathWide::Prepare()
 {
-	pPath = std::make_shared<CPathInfo>(false);
+	pPath = std::shared_ptr<CPathInfo>(new CPathInfo(false));
 }
 
 } // namespace circuit

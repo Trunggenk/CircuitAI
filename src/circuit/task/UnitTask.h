@@ -8,6 +8,13 @@
 #ifndef SRC_CIRCUIT_TASK_UNITTASK_H_
 #define SRC_CIRCUIT_TASK_UNITTASK_H_
 
+// Task liveness registry -- diagnosis for the stale-task crash, not a fix.
+// Build with -DCIRCUIT_TASK_REGISTRY=0 to compile it out entirely; set
+// CIRCUIT_NO_TASK_REGISTRY in the environment to disable it without a rebuild.
+#ifndef CIRCUIT_TASK_REGISTRY
+#define CIRCUIT_TASK_REGISTRY 1
+#endif
+
 #include "script/RefCounter.h"
 
 #include "AIFloat3.h"
@@ -81,6 +88,26 @@ public:
 	// AS API
 	void Abort();
 	void Done();
+
+	// Liveness registry. CCircuitUnit::task is a RAW pointer and IRefCounter
+	// deletes at zero, so a stranded task pointer is freed memory that still
+	// reads as a pointer -- the vtable fetch is what faults. Probe answers
+	// "is a live IUnitTask registered at this address" WITHOUT dereferencing
+	// it. An address the allocator has already recycled for a new task reads
+	// as live, so this proves absence, never identity.
+	struct SLiveness {
+		bool live;   // a live IUnitTask is registered at this address
+		bool known;  // address seen before (live now, or freed earlier)
+		Type type;   // type recorded FOR THAT ADDRESS; junk unless `known`
+		int sub;     // subtype ordinal recorded by NoteSubtype, -1 if none
+	};
+	static SLiveness Probe(const IUnitTask* task);
+	static const char* TypeName(Type t);
+	// Refines a live entry with a derived-class subtype. Must be called from
+	// the DERIVED constructor: at IUnitTask's own ctor the derived part does
+	// not exist yet. Kept as an opaque int so this base header does not have
+	// to know any derived enum.
+	static void NoteSubtype(const IUnitTask* task, int sub);
 
 protected:
 	bool IsQueryReady(CCircuitUnit* unit) const;

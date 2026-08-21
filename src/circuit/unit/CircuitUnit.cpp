@@ -6,6 +6,7 @@
  */
 
 #include "unit/CircuitUnit.h"
+#include "task/UnitTask.h"  // full type for the counted task reference
 #include "unit/action/DGunAction.h"
 #include "unit/action/TravelAction.h"
 #include "unit/enemy/EnemyUnit.h"
@@ -14,6 +15,7 @@
 #include "terrain/TerrainManager.h"  // Only for CorrectPosition
 #include "CircuitAI.h"
 #include "util/Utils.h"
+#include "Log.h"  // complete springai::Log for the LOG macro (REFTRAP diagnostic)
 #ifdef DEBUG_VIS
 #include "task/UnitTask.h"
 #endif
@@ -97,6 +99,9 @@ CCircuitUnit::CCircuitUnit(CCircuitAI* circuit, Id unitId, Unit* unit, CCircuitD
 
 CCircuitUnit::~CCircuitUnit()
 {
+	if (task != nullptr) {
+		task->Release();  // the counted reference SetTask holds
+	}
 	delete command;
 	delete dgun;
 	delete weapon;
@@ -105,7 +110,44 @@ CCircuitUnit::~CCircuitUnit()
 
 void CCircuitUnit::SetTask(IUnitTask* task)
 {
-	this->task = task;
+	// The unit's task pointer holds a COUNTED reference: engine events
+	// (UnitMoveFailed, UnitIdle, UnitDamaged) read unit->GetTask() at
+	// arbitrary times, and a task freed by a script-side Release while a unit
+	// still pointed at it crashed live at 63 game-minutes (2026-08-15, AV in
+	// UnitMoveFailed -> GetTask()->GetType()). Same cure as buildTasks
+	// membership: a pointer somebody may dereference owns a reference.
+	if (this->task != task) {
+		if (task != nullptr) {
+			task->AddRef();
+		}
+		// CRASH DIAGNOSTIC (temporary): a nil/idle/player singleton about to
+		// be released with no other holder means THIS release is the refcount
+		// imbalance -- dump full context before the RefCounter trap fires.
+		if ((this->task != nullptr) && this->task->IsPermanent() && (this->task->GetRefCount() <= IRefCounter::kCushion + 1)) {
+			CCircuitAI* c = (manager != nullptr) ? manager->GetCircuit() : nullptr;
+			if (c != nullptr) {
+				c->LOG("apex REFTRAP: unit=%d def=%d oldType=%d oldMgr=%p newType=%d newMgr=%p unitMgr=%p refs=%d",
+						(int)GetId(), (int)circuitDef->GetId(),
+						(int)this->task->GetType(), (void*)this->task->GetManager(),
+						(task != nullptr) ? (int)task->GetType() : -1,
+						(task != nullptr) ? (void*)task->GetManager() : nullptr,
+						(void*)manager, this->task->GetRefCount());
+			}
+		}
+		if (this->task != nullptr) {
+			// DEFERRED: dropping the old task's reference here can be the LAST
+			// one (a dead task kept alive only by this unit), and Release()
+			// would delete it while ITS OWN RemoveAssignee/Stop is still on
+			// the stack -- symbolized live twice (AssignTask path, then the
+			// OnUnitDestroyed path). The release runs at the next safe point.
+			if (manager != nullptr) {
+				manager->GetCircuit()->DeferRelease(this->task);
+			} else {
+				this->task->Release();
+			}
+		}
+		this->task = task;
+	}
 	SetTaskFrame(manager->GetCircuit()->GetLastFrame());
 	taskState = ETaskState::NONE;
 }
@@ -529,23 +571,61 @@ void CCircuitUnit::Attack(CEnemyInfo* enemy, bool isGround, int timeout)
 
 void CCircuitUnit::Attack(const AIFloat3& pos, CEnemyInfo* enemy, bool isGround, bool isStatic, int timeout)
 {
+	// `pos` is a standoff point on a ring of this unit's own weapon range, and
+	// the orders that used to follow it threw it away. CMD_FIGHT re-acquires the
+	// CLOSEST enemy within maxRange + 100*moveState^2 and pushes its own
+	// CMD_ATTACK to the front of the queue (CMobileCAI::ExecuteFight), and
+	// CMD_ATTACK calls StopMove() the moment a weapon bears
+	// (CMobileCAI::ExecuteObjectAttack). Either one discards both the distance
+	// and the target chosen here.
+	//
+	// Move plus set-target instead. The move order ends at the ring;
+	// unit_target_on_the_move re-applies the preference every 5 frames on its
+	// own, so no repeat order is needed and weapons fire while the unit walks.
+	// Anything else in range is still answered by engine auto-targeting, which
+	// yields to a user target only while that target can actually be hit
+	// (CWeapon::AllowWeaponAutoTarget).
+	//
+	// Three cases keep the old orders, because set-target cannot express them:
+	// a cloaked target must be attacked as ground, a contact held on radar only
+	// is dropped by the gadget within 15 frames and the fight order IS the
+	// walk-in that gains LOS, and melee delivers its damage by arriving.
+	// A static target's position never changes, so it needs no fresh LOS to
+	// stay accurate the way a mobile radar-only contact does -- the "walk to
+	// its actual position to confirm it" fallback below exists for ghosts,
+	// not towers. A weapon range that exceeds sight radius (e.g. Hound: 650
+	// range, ~400 sight -- see the squad-path fix in SquadTask.cpp) reads
+	// IsInLOS()==false while correctly holding standoff, so without this the
+	// fallback sent the unit walking to the tower's own ground position,
+	// straight past the standoff ring it had just reached.
+	const bool prefer = (manager->GetCircuit()->GetTunable("apex_prefer_target", 1.f) > 0.f)
+			&& !isGround && !circuitDef->IsAttrMelee() && (isStatic || enemy->IsInLOS());
 	TRY_UNIT(manager->GetCircuit(), this,
-		if (circuitDef->IsAttrMelee()) {
-			if (IsJumpReady()) {
-				CmdJumpTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-				CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
-			} else {
-				CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
-			}
+		if (circuitDef->IsAttrMelee() && IsJumpReady()) {
+			CmdJumpTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
+			CmdFightTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
 		} else {
 			CmdMoveTo(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, timeout);
 		}
-		if (isGround) {  // los-cheat related
-			CmdAttackGround(enemy->GetPos(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
-		} else {
-			unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+		if (!prefer) {
+			if (isGround) {  // los-cheat related
+				CmdAttackGround(enemy->GetPos(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+				CmdFightTo(enemy->GetPos(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);  // los-cheat related
+			} else {
+				// NO queued CmdFightTo here: a fight order re-acquires the
+				// closest enemy and stops all movement the moment a weapon
+				// bears (CMobileCAI::ExecuteFight), which cancelled the
+				// spacing move for every unit whose weapon out-ranges its
+				// sight -- a Hound (650 range, ~400 sight) reads !IsInLOS on
+				// nearly every properly-held standoff target, so its kite
+				// point died to this constantly (apexearth, watching: "when
+				// our hound style unit wants to run away or get spacing it
+				// uses a fight command"). The queued ATTACK already closes
+				// distance if the blip is genuinely out of reach, which was
+				// the fight order's whole job.
+				unit->Attack(enemy->GetUnit(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);
+			}
 		}
-		CmdFightTo(enemy->GetPos(), UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY | UNIT_COMMAND_OPTION_SHIFT_KEY, timeout);  // los-cheat related
 		CmdWantedSpeed(NO_SPEED_LIMIT);
 		CmdSetTarget(target);
 		if (circuitDef->IsAttrOnOff()) {

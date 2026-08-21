@@ -10,11 +10,21 @@
 
 #include "Unit.h"
 
+#include <cstddef>
+
 namespace circuit {
 
 class ICoreUnit {
 public:
 	using Id = int;
+
+	// CRASH DIAGNOSTIC (temporary): guard-page allocation for every unit
+	// object (own, ally, enemy, fake) -- delete decommits but keeps the
+	// address reserved, so any use-after-free faults at the guilty
+	// instruction instead of corrupting the malloc heap (observed landing
+	// in the engine's Lua GC). Defined in EnemyUnit.cpp.
+	static void* operator new(std::size_t sz);
+	static void operator delete(void* p);
 
 	ICoreUnit(Id unitId, springai::Unit* unit)
 		: id(unitId)

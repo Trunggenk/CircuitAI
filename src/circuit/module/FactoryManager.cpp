@@ -816,7 +816,7 @@ CRecruitTask* CFactoryManager::Enqueue(const TaskS::SRecruitTask& ti)
 {
 	CRecruitTask* task = new CRecruitTask(this, ti.priority, ti.buildDef, ti.position, ti.type, ti.radius);
 	factoryTasks.push_back(task);
-	updateTasks.push_back(task);
+	PushUpdate(task);
 	TaskAdded(task);
 	return task;
 }
@@ -845,7 +845,7 @@ IUnitTask* CFactoryManager::Enqueue(const TaskS::SServSTask& ti)
 		} break;
 	}
 
-	updateTasks.push_back(task);
+	PushUpdate(task);
 	TaskAdded(task);
 	return task;
 }
@@ -1706,7 +1706,35 @@ CFactoryManager::SRecruitDef CFactoryManager::RequiredFireDef(CCircuitUnit* buil
 const std::vector<float>& CFactoryManager::GetFacTierProbs(const SFactoryDef& facDef) const
 {
 	CEconomyManager* economyMgr = circuit->GetEconomyManager();
-	const float metalIncome = std::min(economyMgr->GetAvgMetalIncome(), economyMgr->GetAvgEnergyIncome()) * economyMgr->GetEcoFactor();
+	// apex: was min(metal, energy) * ecoFactor -- tier (and so composition
+	// PROPORTIONS, not just affordability) silently capped to whichever
+	// resource happened to be scarcer at that instant, even for a def whose
+	// own metal:energy cost ratio isn't remotely balanced 1:1. A handful of
+	// bad energy minutes (this AI has had several separate, since-fixed
+	// energy-management bugs the same night) would drag the WHOLE roster
+	// down to a low tier, hardest on exactly the units with the highest
+	// energy-to-metal cost (Sniper ~29:1, Welder ~17:1) even though metal
+	// income alone would already justify a much stronger composition.
+	// isRequireEnergy && IsEnergyEmpty() a few lines below was ALSO removed
+	// from this gate, not just the min() term above -- checked, and it was
+	// not the rare crisis valve the previous comment here assumed:
+	// AiUpdateEconomy (economy.as) defines isEnergyEmpty as CURRENT energy
+	// under 20% of STORAGE, an instantaneous read with no smoothing, against
+	// a storage pool that starts small and gets spent down by ordinary
+	// active building constantly -- so it flickers true often in perfectly
+	// healthy play, not just during a real stall. Every flicker used to
+	// reset tier selection all the way back to tier0, discarding whatever
+	// metal income had already earned. Measured 2026-08-15: composition
+	// stayed pinned near tier0 (mostly Hound) until income reached fusion
+	// territory (130 m/s, well past armalab's own top income bracket of 80)
+	// -- apexearth: "it took a shit ton of eco to get us past just making
+	// hounds... your eco thresholds are far too strong." Two fusions gave
+	// enough storage buffer to stop the flicker, which is what actually
+	// unblocked it, not the higher income itself. Metal income alone now
+	// drives tier, full stop; genuine unaffordability is still caught by
+	// this AI's own build-capability guards (CanBuild) and the native
+	// buildoptions check, not a coarse team-wide flag.
+	const float metalIncome = economyMgr->GetAvgMetalIncome() * economyMgr->GetEcoFactor();
 	const bool isWaterMap = circuit->GetTerrainManager()->IsWaterMap();
 	const float enemyTotalAirCost = circuit->GetEnemyManager()->GetEnemyCost(ROLE_TYPE(AIR));
 	const float allyAACost = circuit->GetMilitaryManager()->GetRoleCost(ROLE_TYPE(AA)) * circuit->GetAllyTeam()->GetAliveSize();
@@ -1717,7 +1745,7 @@ const std::vector<float>& CFactoryManager::GetFacTierProbs(const SFactoryDef& fa
 	tierDbg = 0;
 #endif
 	auto facIt = tiers.begin();
-	if ((metalIncome >= facDef.incomes[facIt->first]) && !(facDef.isRequireEnergy && economyMgr->IsEnergyEmpty())) {
+	if (metalIncome >= facDef.incomes[facIt->first]) {
 		while (facIt != tiers.end()) {
 			if (metalIncome < facDef.incomes[facIt->first]) {
 				break;

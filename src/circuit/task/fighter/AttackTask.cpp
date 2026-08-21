@@ -7,6 +7,7 @@
 
 #include "task/fighter/AttackTask.h"
 #include "map/InfluenceMap.h"
+#include "map/MapManager.h"
 #include "map/ThreatMap.h"
 #include "module/MilitaryManager.h"
 #include "setup/SetupManager.h"
@@ -25,6 +26,7 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
+#include "Drawer.h"
 #include "Log.h"
 
 namespace circuit {
@@ -61,16 +63,14 @@ static constexpr float ATTACK_CEILING_MOD = 3.f;
 // a T1 bot) becomes the binding limit instead of this. The air tasks were raised
 // from the same 1000 for the same reason.
 #define ASSIGN_RADIUS	3000.f
-// Was 2.5, tuned from a single Cortex pair (Banisher 54 / Mammoth 22.5 = 2.4).
-// That is faction-specific by construction: Legion's comparably-common T2 pair
-// (legstr 84 / leginc 24 = 3.5) fails the 2.5 gate outright, so leginc -- a
-// unit factory.json weights up to 0.38 at some income tiers -- can never merge
-// into a squad with its faction's own fast T2 escort and is forced to fight
-// alone every game. Raised to 3.5 to admit that pair while still excluding the
-// genuine outliers (Cortex's corjugg/T3 superheavies at ~16.5 need ratio 3.3+
-// against corban and are borderline either way; scouts like legscout at 160
-// need ~6.7 and stay excluded regardless).
-#define SQUAD_SPEED_RATIO	3.5f
+// A squad moves at its SLOWEST member's speed, so this decides how far apart
+// two units may be in speed before they are made to fight separately.
+//
+// 1.5 by apexearth's call, 2026-08-19, watching a squad stalled in the backline
+// keeping pace with a Behemoth. The previous 3.5 was set to let Legion's
+// legstr 84 / leginc 24 pair squad together; at 1.5 that pair splits again and
+// leginc fights alone. The slow-heavy stall was judged the worse of the two.
+#define SQUAD_SPEED_RATIO	1.5f
 
 // Target-preference multipliers. The selection metric is a squared distance, so
 // 4.0 means an artillery piece is preferred over a closer ordinary unit until it
@@ -217,6 +217,17 @@ static inline float TradeScaledMargin(circuit::CCircuitAI* circuit)
 // things that die in a raid pass from the things that soak one.
 #define SOFT_ECO_DENSITY	0.50f
 #define SOFT_ECO_BONUS		2.0f
+// apex: THE DIVE. A squad already standing in the enemy's own influence is past
+// their wall -- from there a fat unarmed structure (advanced converter, fusion,
+// AFUS) outranks every military target, guarded or not, and the local-army
+// refusal is waived for it: the dive is a commitment, the same shape as the
+// juggernaut charge. apexearth: "If we know we are near the enemy base, we
+// should dive straight into it and prioritize targetting their economy. Don't
+// get distracted by military or towers if an advanced converter or afus is in
+// range." Cost floor is a tunable; 350 clears the advanced converter (380) and
+// everything above it while leaving solars and plain mexes to the ordinary
+// free-eco ordering.
+#define DIVE_ECO_PRIORITY	8.0f
 // apex: how much better a new candidate must look before a squad abandons the
 // target it already chose. FindTarget re-runs every pass and scores purely on
 // the CURRENT geometry, so as the squad moved the ordering churned and it
@@ -289,13 +300,37 @@ void CAttackTask::AssignTo(CCircuitUnit* unit)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	highestRange = std::max(highestRange, cdef->GetLosRadius());
 
-	if (cdef->IsRoleSupport()) {
+	// A UNIT THAT CAN SHOOT WHAT THE SQUAD SHOOTS FIGHTS IN THE FORMATION; ONLY
+	// AN ESCORT THAT CANNOT FOLLOWS THE LEADER.
+	//
+	// CSupportAction is blocking, and ISquadTask::Attack and ActivePath both skip
+	// a unit whose Blocker() is set, so attaching it hands the unit's position to
+	// the action -- and the action has no position logic for anything armed:
+	// `reach` is only ever set inside its own `!IsAttacker()` branch, leaving
+	// `pos = leaderPos` and a 64-elmo stop radius.
+	//
+	// IsRoleSupport() is the role MASK, and CCircuitDef::AddRole ORs in the
+	// BINDED role, so it is true for the "support" ATTRIBUTE and for every custom
+	// role bound to SUPPORT -- not just for things that escort.
+	//
+	// HasSurfToLand() rather than IsAttacker(): pure AA still has DPS, and an AA
+	// escort put on the arc of a ground fight it cannot join would be standing on
+	// the front rank for nothing.
+	if (cdef->IsRoleSupport() && !cdef->HasSurfToLand()) {
 		unit->PushBack(new CSupportAction(unit));
 	}
 
 	int squareSize = manager->GetCircuit()->GetPathfinder()->GetSquareSize();
 	ITravelAction* travelAction;
-	if (cdef->IsAttrSiege()) {
+	// Formation travel (apexearth 2026-08-21): the whole ground squad marches on
+	// synchronized-speed FIGHT orders, not per-unit moves -- engage together en
+	// route, hold the line together. Wounded still leave: RetreatTask swaps the
+	// travel act out (dropping the fight order), and the engagement standoff
+	// ring still owns distance-keeping once fighting starts. Flyers keep MOVE.
+	if ((cdef->IsAttrSiege() && (manager->GetCircuit()->GetTunable("apex_siege_fight", 1.f) > 0.f))
+		|| (!cdef->IsAbleToFly()
+			&& (manager->GetCircuit()->GetTunable("apex_fight_travel", 1.f) > 0.f)))
+	{
 		travelAction = new CFightAction(unit, squareSize);
 	} else {
 		travelAction = new CMoveAction(unit, squareSize);
@@ -364,7 +399,9 @@ void CAttackTask::Start(CCircuitUnit* unit)
 		return;
 	}
 	if (!pPath->posPath.empty()) {
-		unit->GetTravelAct()->SetPath(pPath, lowestSpeed);
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->SetPath(pPath, lowestSpeed);
+		}
 	}
 }
 
@@ -385,6 +422,33 @@ void CAttackTask::Update()
 	}
 
 	/*
+	 * apex: THE ATTACK CLOSES WHEN IT FAILS. Health-based withdrawal cannot
+	 * see a lost fight -- the survivors of a wiped squad are often at full HP,
+	 * read "healthy", and keep pressing. When the task holds a fraction of the
+	 * power it ever held, the fight is over: abort, so the survivors re-pool
+	 * at home and leave with the next real group (the massing bar holds them
+	 * there while the enemy out-masses us). Chargers deliver by arriving, and
+	 * a declared team push is committed; both keep pressing.
+	 */
+	{
+		CCircuitAI* circuit = manager->GetCircuit();
+		peakPower = std::max(peakPower, attackPower);
+		const CCircuitDef* ldef = (leader != nullptr) ? leader->GetCircuitDef() : nullptr;
+		const bool isCharger = (ldef != nullptr) && ldef->IsCharger();
+		if (!isCharger && !circuit->IsCommitted() && (peakPower > 1.f)
+			&& (attackPower < peakPower * circuit->GetTunable("apex_attack_break", 0.4f)))
+		{
+			circuit->LOG("apex: attack broken -- power %.0f of peak %.0f, survivors re-pool",
+					attackPower, peakPower);
+			if ((leader != nullptr) && (circuit->GetTunable("apex_ping", 0.f) > 0.f)) {
+				circuit->GetDrawer()->AddPoint(leader->GetLastPos(), "ATK broken");
+			}
+			manager->AbortTask(this);
+			return;
+		}
+	}
+
+	/*
 	 * Regroup if required
 	 */
 	bool wasRegroup = (State::REGROUP == state);
@@ -394,7 +458,9 @@ void CAttackTask::Update()
 			CCircuitAI* circuit = manager->GetCircuit();
 			int frame = circuit->GetLastFrame() + FRAMES_PER_SEC * 60;
 			for (CCircuitUnit* unit : units) {
-				unit->GetTravelAct()->StateWait();
+				if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+					unit->GetTravelAct()->StateWait();
+				}
 				unit->Gather(groupPos, frame);
 			}
 		}
@@ -452,6 +518,80 @@ void CAttackTask::Update()
 			circuit->GetPathfinder()->Pos2PathXY(startPos, &xs, &ys);
 			circuit->GetPathfinder()->Pos2PathXY(position, &xe, &ye);
 			if (GetHitTest()(int2(xs, ys), int2(xe, ye))) {
+				// apex: ASSEMBLE BEFORE THE FIGHT STARTS. DEPLOY_SLACK unfolds
+				// the column into a line, but ENGAGE keys on the LEADER's
+				// distance -- units strung back along the path get their arc
+				// slots and trickle into a fight already lost by the front.
+				// apexearth: "you need to organize your units so that all of
+				// them enter the fight at about the same time." Hold the
+				// units already in formation (StateWait) while stragglers
+				// close to the same cohesion bound IsMustRegroup uses; a
+				// bounded budget and an under-fire test keep this from
+				// dithering: standing in enemy threat means the fight has
+				// already started, and waiting in it is worse than engaging.
+				const CCircuitDef* ldef = leader->GetCircuitDef();
+				const bool skipAssemble = (units.size() < 3)
+						|| ldef->IsPlane() || ldef->IsCharger()
+						|| (circuit->GetTunable("apex_assemble", 1.f) <= 0.f);
+				if (!skipAssemble) {
+					CThreatMap* threatMap = circuit->GetThreatMap();
+					threatMap->SetThreatType(leader);
+					const bool underFire = threatMap->GetThreatAt(startPos) >= THREAT_MIN;
+					const float bound = std::max<float>(
+							SQUARE_SIZE * 8 * units.size(), highestRange);
+					float worstSq = 0.f;
+					for (CCircuitUnit* unit : units) {
+						worstSq = std::max(worstSq,
+								startPos.SqDistance2D(unit->GetPos(frame)));
+					}
+					// apex: size the cohesion bound from DATA. The gate fired
+					// zero times in four smoke games, and this line says
+					// whether that is because squads genuinely arrive tight
+					// or because the bound above is looser than real stretch.
+					if (frame >= lastEngageLog + FRAMES_PER_SEC * 20) {
+						lastEngageLog = frame;
+						circuit->LOG("apex: engage-stretch n=%d stretch=%.0f "
+								"bound=%.0f underfire=%d",
+								(int)units.size(), std::sqrt(worstSq), bound,
+								underFire ? 1 : 0);
+					}
+					const bool stretched = worstSq > SQUARE(bound);
+					if (stretched && !underFire) {
+						if (assembleUntil < 0) {
+							assembleUntil = frame + FRAMES_PER_SEC
+									* (int)circuit->GetTunable("apex_assemble_secs", 8.f);
+							circuit->LOG("apex: assembling before contact -- "
+									"stretch %.0f over bound %.0f, %d units",
+									std::sqrt(worstSq), bound, (int)units.size());
+							if (circuit->GetTunable("apex_ping", 0.f) > 0.f) {
+								circuit->GetDrawer()->AddPoint(startPos,
+										utils::string_format("ASSEMBLE n=%d", (int)units.size()).c_str());
+							}
+						}
+						if (frame < assembleUntil) {
+							const float sqBound = SQUARE(bound);
+							for (CCircuitUnit* unit : units) {
+								if (unit->Blocker() != nullptr) {
+									continue;
+								}
+								// In formation: stand. Stragglers: keep coming.
+								if ((startPos.SqDistance2D(unit->GetPos(frame)) <= sqBound)
+									&& (unit->GetTravelAct() != nullptr))
+								{
+									unit->GetTravelAct()->StateWait();
+								}
+							}
+							return;
+						}
+					} else {
+						assembleUntil = -1;
+					}
+				}
+				assembleUntil = -1;
+				if (circuit->GetTunable("apex_ping", 0.f) > 0.f) {
+					circuit->GetDrawer()->AddPoint(startPos,
+							utils::string_format("ATK engage n=%d", (int)units.size()).c_str());
+				}
 				state = State::ENGAGE;
 				Attack(frame);
 				return;
@@ -473,7 +613,43 @@ void CAttackTask::Update()
 		return;
 	}
 
-	const AIFloat3& endPos = position;
+	// apex: A SHARE OF ATTACKS GO AROUND THE SIDE. Every squad pathed the
+	// cheapest line to its target, which at equal threat is the middle --
+	// apexearth 2026-08-19: "I don't see us trying to attack the enemy from
+	// around the side... always straight up the middle. 0 strategy in that."
+	// Rolled once per task like the charge: a flanking squad first walks a
+	// waypoint offset perpendicular from the midpoint of its approach, then
+	// turns onto the real target. Chargers never flank (distance is their
+	// whole budget), and the via is dropped once reached or once engaged.
+	if (flankRoll < 0) {
+		const int pct = (int)circuit->GetTunable("apex_flank_pct", 35.f);
+		flankRoll = (rand() % 100 < pct) ? ((rand() % 2 == 0) ? 1 : 2) : 0;
+	}
+	AIFloat3 endPos = position;
+	if (flankRoll > 0) {
+		if (!utils::is_valid(flankVia)) {
+			AIFloat3 dir = position - startPos;
+			const float dist = sqrtf(dir.SqLength2D());
+			if (dist > circuit->GetTunable("apex_flank_min_dist", 1200.f)) {
+				dir.SafeNormalize2D();
+				const AIFloat3 perp = (flankRoll == 1)
+						? AIFloat3(-dir.z, 0.f, dir.x)
+						: AIFloat3(dir.z, 0.f, -dir.x);
+				AIFloat3 via = (startPos + position) * 0.5f
+						+ perp * (dist * circuit->GetTunable("apex_flank_frac", 0.45f));
+				CTerrainManager::CorrectPosition(via);
+				flankVia = via;
+			}
+		}
+		if (utils::is_valid(flankVia)) {
+			if (startPos.SqDistance2D(flankVia) < SQUARE(500.f)) {
+				flankVia = AIFloat3(-RgtVector);  // via reached: turn onto the target
+				flankRoll = 0;
+			} else {
+				endPos = flankVia;
+			}
+		}
+	}
 	CPathFinder* pathfinder = circuit->GetPathfinder();
 	const float eps = pathfinder->GetSquareSize();
 	const float pathRange = std::max(highestRange - eps, eps);
@@ -510,17 +686,33 @@ void CAttackTask::Update()
 	if (chargeRoll < 0) {
 		chargeRoll = (rand() % 100 < CHARGE_DIRECT_PCT) ? 1 : 0;
 	}
-	const bool isCharge = (chargeRoll == 1)
-			&& ISquadTask::IsChargeDef(leader->GetCircuitDef());
+	// The killing blow (script blackboard "kill") turns EVERY squad into a
+	// charger: with the enemy clearly beaten, threat-detour pathing is what an
+	// enormous army orbiting a doomsday gun's range ring looks like -- the
+	// caution the ceiling buys is for games still in doubt.
+	const bool overrun = circuit->ReadTeamValue(circuit->GetTeamId(), "kill", 0.f) > 0.f;
+	const bool isCharge = overrun || ((chargeRoll == 1)
+			&& ISquadTask::IsChargeDef(leader->GetCircuitDef()));
+	// Each risk level halves the threat cost and doubles the ceiling -- more
+	// accepted risk, never zero care (that stays the chargers' privilege).
+	const float riskDiv = float(1 << riskLevel);
 	const float threatCeiling = isCharge
 			? CHARGE_THREAT_CEILING
-			: (ATTACK_CEILING_MOD * attackPower
+			: (ATTACK_CEILING_MOD * riskDiv * attackPower
 					/ circuit->GetMilitaryManager()->GetRangeUnitCountCompensatorScale());
 	std::shared_ptr<IPathQuery> query = pathfinder->CreatePathSingleQuery(
 			leader, circuit->GetThreatMap(),
 			startPos, endPos, pathRange, GetHitTest(),
 			threatCeiling,
-			false, isCharge ? 0.f : ATTACK_THREAT_MOD);
+			false, isCharge
+					// apex: NOT quite zero. A Behemoth's D-gun one-shots even a
+					// charging T3, and Behemoths walk at ~16 elmos/s -- the one
+					// threat a charger should not eat is also the cheapest to
+					// walk around. The script doubles corjugg's threat kernel,
+					// so at a small mod an enemy Behemoth bends the route a few
+					// hundred elmos while ordinary porc leaves it straight.
+					? circuit->GetTunable("apex_charge_threat_mod", 0.1f)
+					: (ATTACK_THREAT_MOD / riskDiv));
 	pathQueries[leader] = query;
 
 	pathfinder->RunQuery(circuit->GetScheduler().get(), query, [this](const IPathQuery* query) {
@@ -537,12 +729,15 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 
 	CCircuitAI* circuit = manager->GetCircuit();
 	const float maxDist = std::max<float>(lowestRange, circuit->GetPathfinder()->GetSquareSize());
-	if (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist)) {
+	// Only reroll the objective when there is nothing here to shoot. A unit that
+	// finishes its standoff move while the target lives is idle by design now
+	// that the move is the whole order, and it stands within lowestRange of the
+	// objective by construction -- which is this test.
+	if ((GetTarget() == nullptr)
+		&& (position.SqDistance2D(leader->GetPos(circuit->GetLastFrame())) < SQUARE(maxDist)))
+	{
 		CTerrainManager* terrainMgr = circuit->GetTerrainManager();
-		float x = rand() % terrainMgr->GetTerrainWidth();
-		float z = rand() % terrainMgr->GetTerrainHeight();
-		position = AIFloat3(x, circuit->GetMap()->GetElevationAt(x, z), z);
-		position = terrainMgr->GetMovePosition(leader->GetArea(), position);
+		position = RoamPos(leader);
 	}
 
 	if (units.find(unit) != units.end()) {
@@ -555,20 +750,6 @@ void CAttackTask::OnUnitIdle(CCircuitUnit* unit)
 // exactly as high as a fresh one. The enemy side of the same comparison is not
 // paper: CThreatMap weights by current health. Weighting our own power by health
 // makes the two sides symmetric.
-float CAttackTask::GetHealthScale()
-{
-	float total = .0f;
-	float alive = .0f;
-	for (CCircuitUnit* unit : units) {
-		const float power = unit->GetCircuitDef()->GetPower();
-		float hp = unit->GetHealthPercent();
-		hp = std::max(.0f, std::min(1.f, hp));  // capture progress drives it negative
-		total += power;
-		alive += power * hp;
-	}
-	return (total > .0f) ? (alive / total) : 1.f;
-}
-
 void CAttackTask::FindTarget()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
@@ -576,6 +757,11 @@ void CAttackTask::FindTarget()
 	CInfluenceMap* inflMap = circuit->GetInflMap();
 	CThreatMap* threatMap = circuit->GetThreatMap();
 	threatMap->SetThreatType(leader);
+	CMapManager* mapMgr = circuit->GetMapManager();
+	// 1.0 == today's behaviour exactly. A tunable, not a hardcoded policy number --
+	// this ships as a no-op and is turned down only after measuring the LOS
+	// coverage this discount actually has to work with.
+	const float unseenEco = circuit->GetTunable("apex_eco_unseen", 1.0f);
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const AIFloat3& basePos = circuit->GetSetupManager()->GetBasePos();
 	const int frame = circuit->GetLastFrame();
@@ -597,12 +783,17 @@ void CAttackTask::FindTarget()
 	const int noChaseCat = cdef->GetNoChaseCategory();
 
 	CEnemyInfo* bestTarget = nullptr;
+	bool bestDive = false;
+	diveCommit = false;
 	// Tuning inputs. Every metric in the stats export is an OUTCOME; to choose a
 	// number for the cohesion cap or a strength margin we need what the decision
 	// actually saw, at the moment it was made.
 	float bestInfl = .0f;
 	float bestNear = .0f;
 	float bestScale = .0f;
+	int bestSeen = 0;  // was the chosen target's ground in current LOS, or only remembered
+	bool bestHome = false;  // chosen target stands on our own ground (odds waived)
+	float bestRefused = .0f;  // strongest strength-test refusal, as power/need
 	// A juggernaut IS the attack. corjugg (Behemoth, 20,000 metal), armbanth
 	// (Titan), corkorg (Korgoth) and armraz all carry role heavy + attribute
 	// melee, and all of them detonate on death -- so the value is delivered by
@@ -617,13 +808,36 @@ void CAttackTask::FindTarget()
 	// bombs but assault-role T1/T2 chaff whose behaviour is not in question here.
 	// CCircuitUnit::Attack already walks a melee unit onto its target rather
 	// than firing from range, so only the DECISION needed changing.
-	const bool isJuggernaut = (cdef != nullptr) && cdef->IsRoleHeavy() && cdef->IsAttrMelee();
+	const bool isJuggernaut = (cdef != nullptr) && cdef->IsCharger();
+	// apex: see DIVE_ECO_PRIORITY. Enemy influence at the SQUAD's own position
+	// is "we are standing on their ground" -- the same field isHome reads from
+	// the other side.
+	const bool inTheirBase = inflMap->GetEnemyInflAt(pos) >= INFL_SAFE;
+	const float diveCost = circuit->GetTunable("apex_dive_eco_cost", 350.f);
+	// Observable, or it cannot be validated -- same rule as the juggernaut line.
+	if (inTheirBase && (frame >= lastEngageLog + FRAMES_PER_SEC * 10)) {
+		lastEngageLog = frame;
+		circuit->LOG("apex: eco dive -- squad on enemy ground, fat eco outranks all");
+	}
 	// Observable, or it cannot be validated. A behaviour with no log line is a
 	// behaviour nobody can prove ever ran -- which is how this repo has shipped
 	// dead code more than once. Rate limited per task, not per call.
 	if (isJuggernaut && (frame >= lastEngageLog + FRAMES_PER_SEC * 10)) {
 		circuit->LOG("apex: juggernaut charge %s -- ignoring engage margin",
 				cdef->GetDef()->GetName());
+	}
+	// A squad worn below press health on enemy ground stops pressing the fight:
+	// with no target chosen, the no-target path (FallbackFrontPos, next pass)
+	// walks the WHOLE group back to our own front, so hurt members travel
+	// escorted instead of peeling off solo through contested ground. Fat
+	// economy is the exception -- next to advanced converters or a fusion the
+	// kill is worth the squad's life -- so a worn squad still scans, but only
+	// dive-qualified eco targets may hold it forward.
+	const bool wornOut = !isJuggernaut && inTheirBase
+			&& (healthScale < circuit->GetTunable("apex_press_health", 0.6f));
+	if (wornOut && (frame >= lastWithdrawLog + FRAMES_PER_SEC * 10)) {
+		lastWithdrawLog = frame;
+		circuit->LOG("apex: squad worn hp=%.2f -- dive targets only", healthScale);
 	}
 	int skippedWeak = 0;
 	// LINEAR, not squared. `scale` below divides a linear distance by this, and
@@ -653,13 +867,33 @@ void CAttackTask::FindTarget()
 		// when the group is closer to our base than we are, i.e. defending home,
 		// where taking a worse fight is correct.
 		const float scale = std::min(distBE / obDist, 1.f);
-		// No margin is demanded on our own ground: a defender that waits for
-		// favourable odds has already lost the thing it was defending.
-		const bool isHome = inflMap->GetInfluenceAt(group.pos) >= INFL_SAFE;
+		// No margin is demanded inside the DEFENDED PERIMETER: a defender that
+		// waits for favourable odds has already lost the thing it was defending.
+		// The perimeter is the defence-influence field around actual defence
+		// structures, not general unit influence -- measured 2026-08-15, net
+		// influence >= INFL_SAFE covered a median 85% of the base->enemy axis
+		// (p75 95%), waiving the odds check on effectively the whole map and
+		// feeding every under-strength squad into any fight it could see.
+		// OUR GROUND OR OUR PERIMETER, either one: the defended-perimeter-only
+		// scoping made the army stand aside while a push rolled through home
+		// territory into the base -- apexearth, watching, 2026-08-15: "we're
+		// still running from enemy army and give them free damage into our
+		// base... if our base is being pushed we have to prioritize defense
+		// and meet that army and destroy it." His live verdict outranks the
+		// noise-floor K/D that motivated the narrow scope.
+		const bool isHome = (inflMap->GetInfluenceAt(group.pos) >= INFL_SAFE)
+				|| (inflMap->GetAllyDefendInflAt(group.pos) > INFL_EPS);
 		const bool holdsPrev = wasEngaged && (prevTarget != nullptr)
 				&& (std::find(group.units.begin(), group.units.end(), prevTarget->GetId()) != group.units.end());
 		const float groupMargin = holdsPrev ? CONTINUE_MARGIN : TradeScaledMargin(circuit);
-		if (!isJuggernaut && (maxPower <= group.influence * scale * groupMargin) && !isHome) {
+		// The dive commitment is to FAT ECONOMY, not to any fight on their
+		// ground: a blanket inTheirBase waiver here let any squad -- a lone
+		// survivor included -- engage towers and armies at hopeless odds the
+		// moment it stood on enemy influence. A weak group inside their base is
+		// still scanned, but only its unarmed fat-eco targets qualify (isDive).
+		const bool groupWeak = !isJuggernaut
+				&& (maxPower <= group.influence * scale * groupMargin) && !isHome;
+		if (groupWeak && !inTheirBase) {
 			++skippedWeak;
 			continue;
 		}
@@ -772,13 +1006,30 @@ void CAttackTask::FindTarget()
 					localInfl += g.influence;
 				}
 			}
+			// THE DIVE: inside their base, a fat unarmed structure outranks
+			// everything whether it is guarded or not -- see DIVE_ECO_PRIORITY.
+			const bool isDive = inTheirBase && (edef != nullptr)
+					&& !edef->IsMobile() && !edef->IsAttacker()
+					&& (edef->GetCostM() >= diveCost);
+			if (isDive) {
+				prio *= DIVE_ECO_PRIORITY;
+			}
+			if ((groupWeak || wornOut) && !isDive) {
+				++skippedWeak;
+				continue;  // on their ground under-strength or worn: fat eco only
+			}
 			// localInfl is already the army standing beside this target. It was
 			// only ever used to REFUSE a target; nothing used it to prefer a safe
 			// one. A static, unarmed, undefended building is exactly that.
 			if ((edef != nullptr) && !edef->IsMobile() && !edef->IsAttacker()
 				&& (localInfl <= .0f))
 			{
-				prio *= FREE_ECO_PRIORITY;
+				// localInfl == 0 is "no army REMEMBERED here" (hostileDatas retains
+				// anything out of current radar/LOS via CMapManager::HostileInLOS),
+				// not "no army here". The structure itself is safe to remember -- it
+				// cannot move. The absence of a guard next to it is not, unless we
+				// have actually looked.
+				prio *= mapMgr->IsInLOS(ePos) ? FREE_ECO_PRIORITY : (FREE_ECO_PRIORITY * unseenEco);
 				// ...and prefer the ones that actually die in the time a raid
 				// has. A converter is 380 metal behind 445 hitpoints; an
 				// advanced solar is 350 behind 1130. Equal-ish metal, and only
@@ -804,8 +1055,14 @@ void CAttackTask::FindTarget()
 			}
 
 			const float nearMargin = (enemy == prevTarget) ? CONTINUE_MARGIN : TradeScaledMargin(circuit);
-			if (!isJuggernaut && (localInfl > .0f) && (maxPower < localInfl * nearMargin) && !isHome) {
+			if (!isJuggernaut && !isDive
+				&& (localInfl > .0f) && (maxPower < localInfl * nearMargin) && !isHome) {
 				++skippedWeak;
+				// The strongest refusal: near 1.0 means one merge or a small
+				// margin change would have taken it; near 0.2 means hopeless.
+				// This ratio is what decides which fix target-skipping gets.
+				bestRefused = std::max(bestRefused,
+						maxPower / std::max(localInfl * nearMargin, 1.f));
 				continue;
 			}
 
@@ -813,18 +1070,28 @@ void CAttackTask::FindTarget()
 			if (minSqDist > sqOEDist) {
 				minSqDist = sqOEDist;
 				bestTarget = enemy;
+				bestDive = isDive;
 				bestInfl = group.influence;
 				bestNear = localInfl;
 				bestScale = scale;
+				bestSeen = mapMgr->IsInLOS(ePos) ? 1 : 0;
+				bestHome = isHome;
 				hasGoodTarget |= !isOverpowered;
 			}
 		}
 	}
 
 	if (bestTarget != nullptr) {
+		if (bestTarget != prevTarget) {
+			riskLevel = 0;   // new objective, fresh route judgement
+		}
 		SetTarget(bestTarget);
 		position = GetTarget()->GetPos();
+		diveCommit = bestDive;
 	}
+	// Feeds the accelerated merge check: a refusal pass this close to the bar
+	// means a partner squad is the difference.
+	lastRefused = (bestTarget == nullptr) ? bestRefused : .0f;
 
 	// One line per squad per 10s, TAKE=committing to a target, SKIP=every group
 	// failed the strength test. `edge` is our rated power over what we had to
@@ -833,13 +1100,16 @@ void CAttackTask::FindTarget()
 	if (frame >= lastEngageLog + FRAMES_PER_SEC * 10) {
 		lastEngageLog = frame;
 		const float need = bestInfl * bestScale;
+		// home=1 separates desperate defence of our own ground (odds waived on
+		// purpose) from a bad attack -- without it a losing game's audit reads
+		// every base-defence fight as a "hopeless engagement".
 		circuit->LOG("apex: engage %s units=%d spread=%.0f hp=%.2f coh=%.2f "
-				"power=%.0f need=%.0f edge=%.2f skipped=%d near=%.0f",
+				"power=%.0f need=%.0f edge=%.2f skipped=%d bestRef=%.2f near=%.0f seen=%d home=%d",
 				(bestTarget != nullptr) ? "TAKE" : "SKIP",
 				int(units.size()), spread, healthScale,
 				cohesion, maxPower, need,
-				(need > 1.f) ? (maxPower / need) : 0.f, skippedWeak,
-				bestNear);
+				(need > 1.f) ? (maxPower / need) : 0.f, skippedWeak, bestRefused,
+				bestNear, bestSeen, bestHome ? 1 : 0);
 	}
 	// Return: target, startPos=leader->pos, endPos=position
 }
@@ -853,8 +1123,15 @@ void CAttackTask::ApplyTargetPath(const CQueryPathSingle* query)
 		// walked/direct near 1.0 is a charge up the middle, well above 1.0 is a
 		// flank. Rate limited because attack paths are re-queried constantly.
 		CCircuitAI* circuit = manager->GetCircuit();
-		if (circuit->GetLastFrame() >= lastDetourLog + FRAMES_PER_SEC * 20) {
-			lastDetourLog = circuit->GetLastFrame();
+		// Detour computed EVERY pass, not just on log ticks: it drives the
+		// charge flag below. A walk this many times the straight line is not
+		// a flank, it is evasion -- the army is out of position the whole
+		// trip. Measured live (8v8 Isthmus): detour=4.70; apexearth: "we seem
+		// to want to find safe paths way far away from enemy armies... and
+		// therefore we do a pretty shit job defending ourselves." The next
+		// query for this task paths charge-style (pure distance); FindTarget
+		// clears the flag on a target change, so it is per-objective.
+		{
 			const AIFloat3& from = pPath->posPath.front();
 			const AIFloat3& to = pPath->posPath.back();
 			float walked = 0.f;
@@ -863,10 +1140,17 @@ void CAttackTask::ApplyTargetPath(const CQueryPathSingle* query)
 			}
 			const float direct = from.distance2D(to);
 			if (direct > 1.f) {
-				circuit->LOG("apex: attack path walked=%.0f direct=%.0f detour=%.2f charge=%d",
-						walked, direct, walked / direct,
-						int((chargeRoll == 1) && (leader != nullptr)
-								&& ISquadTask::IsChargeDef(leader->GetCircuitDef())));
+				const bool tooFar = (walked / direct)
+						> circuit->GetTunable("apex_max_detour", 2.0f);
+				if (tooFar && (riskLevel
+						< int(circuit->GetTunable("apex_max_risk", 3.f)))) {
+					++riskLevel;   // next query accepts more risk, stays aware
+				}
+				if (circuit->GetLastFrame() >= lastDetourLog + FRAMES_PER_SEC * 20) {
+					lastDetourLog = circuit->GetLastFrame();
+					circuit->LOG("apex: attack path walked=%.0f direct=%.0f detour=%.2f risk=%d",
+							walked, direct, walked / direct, riskLevel);
+				}
 			}
 		}
 		ActivePath(lowestSpeed);
@@ -878,7 +1162,33 @@ void CAttackTask::ApplyTargetPath(const CQueryPathSingle* query)
 void CAttackTask::FallbackFrontPos()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	circuit->GetMilitaryManager()->FillFrontPos(leader, urgentPositions);
+	// ADVANCE, don't retrace. apexearth, watching live: a squad kills its one
+	// elected target (a lone mex), finds nothing else visible, and walks all
+	// the way back to the front/base -- with the enemy now undefended. A
+	// healthy squad falls onto REMEMBERED enemy positions first; the front
+	// line and the base are for squads too mauled to press.
+	float hp = 0.f, hpMax = 0.f;
+	for (CCircuitUnit* unit : units) {
+		if (unit->IsDead()) {
+			continue;
+		}
+		hp += unit->GetUnit()->GetHealth();
+		hpMax += unit->GetCircuitDef()->GetHealth();
+	}
+	const bool healthy = (hpMax > 1.f)
+			&& (hp / hpMax >= circuit->GetTunable("apex_press_health", 0.6f));
+	if (healthy) {
+		const std::vector<CEnemyManager::SEnemyGroup>& groups = circuit->GetEnemyManager()->GetEnemyGroups();
+		urgentPositions.clear();
+		for (const CEnemyManager::SEnemyGroup& group : groups) {
+			if (utils::is_valid(group.pos) && (group.cost > 1.f)) {
+				urgentPositions.push_back(group.pos);
+			}
+		}
+	}
+	if (urgentPositions.empty() || !healthy) {
+		circuit->GetMilitaryManager()->FillFrontPos(leader, urgentPositions);
+	}
 	if (urgentPositions.empty()) {
 		FallbackBasePos();
 		return;
@@ -916,8 +1226,26 @@ void CAttackTask::FallbackBasePos()
 	CCircuitAI* circuit = manager->GetCircuit();
 	CSetupManager* setupMgr = circuit->GetSetupManager();
 
+	// apexearth, watching live: a squad that just WON its fight -- most units
+	// above 80% health -- walked all the way home to stand around, handing the
+	// now-undefended enemy a free rebuild. A healthy squad with nowhere
+	// obvious to go should PRESS toward the enemy's centre of mass, not
+	// retrace half the map; only a mauled squad earns the walk home.
+	float hp = 0.f, hpMax = 0.f;
+	for (CCircuitUnit* unit : units) {
+		if (unit->IsDead()) {
+			continue;
+		}
+		hp += unit->GetUnit()->GetHealth();
+		hpMax += unit->GetCircuitDef()->GetHealth();
+	}
+	const float pressHealth = circuit->GetTunable("apex_press_health", 0.6f);
+	const AIFloat3& foePos = circuit->GetEnemyManager()->GetEnemyPos();
+	const bool press = (hpMax > 1.f) && (hp / hpMax >= pressHealth)
+			&& utils::is_valid(foePos);
+
 	const AIFloat3& startPos = leader->GetPos(circuit->GetLastFrame());
-	const AIFloat3& endPos = setupMgr->GetBasePos();
+	const AIFloat3& endPos = press ? foePos : setupMgr->GetBasePos();
 	const float pathRange = DEFAULT_SLACK * 4;
 
 	CPathFinder* pathfinder = circuit->GetPathfinder();
@@ -950,7 +1278,9 @@ void CAttackTask::Fallback()
 	CCircuitAI* circuit = manager->GetCircuit();
 	const int frame = circuit->GetLastFrame();
 	for (CCircuitUnit* unit : units) {
-		unit->GetTravelAct()->StateWait();
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->StateWait();
+		}
 		TRY_UNIT(circuit, unit,
 			unit->CmdFightTo(position, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY, frame + FRAMES_PER_SEC * 60);
 			unit->CmdWantedSpeed(lowestSpeed);

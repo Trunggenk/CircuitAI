@@ -56,7 +56,14 @@ void IRepairTask::RemoveAssignee(CCircuitUnit* unit)
 
 	// Inform repair-target task/unit
 	CCircuitAI* circuit = manager->GetCircuit();
-	CAllyUnit* repTarget = (target != nullptr) ? target : circuit->GetFriendlyUnit(targetId);
+	// Always a LIVE lookup, never the cached pointer: repairUnits is a
+	// one-slot-per-target map, so a second repair task for the same target
+	// evicts the first from it -- the evicted task is then never aborted when
+	// the target dies and its cached `target` dangles (crashed a soak at 48
+	// game-minutes, 2026-08-15, IsRoleComm on a freed def). GetFriendlyUnit
+	// resolves a dead id to nullptr, which the null branch below already
+	// handles as the abort path.
+	CAllyUnit* repTarget = (targetId != -1) ? circuit->GetFriendlyUnit(targetId) : nullptr;
 	if (repTarget == nullptr) {
 		return;
 	}
@@ -105,7 +112,14 @@ void IRepairTask::Finish()
 void IRepairTask::Cancel()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	CAllyUnit* repTarget = (target != nullptr) ? target : circuit->GetFriendlyUnit(targetId);
+	// Always a LIVE lookup, never the cached pointer: repairUnits is a
+	// one-slot-per-target map, so a second repair task for the same target
+	// evicts the first from it -- the evicted task is then never aborted when
+	// the target dies and its cached `target` dangles (crashed a soak at 48
+	// game-minutes, 2026-08-15, IsRoleComm on a freed def). GetFriendlyUnit
+	// resolves a dead id to nullptr, which the null branch below already
+	// handles as the abort path.
+	CAllyUnit* repTarget = (targetId != -1) ? circuit->GetFriendlyUnit(targetId) : nullptr;
 	if (repTarget == nullptr) {
 		return;
 	}
@@ -128,12 +142,22 @@ bool IRepairTask::Execute(CCircuitUnit* unit)
 	executors.insert(unit);
 
 	CCircuitAI* circuit = manager->GetCircuit();
-	CAllyUnit* repTarget = (target != nullptr) ? target : circuit->GetFriendlyUnit(targetId);
+	// Always a LIVE lookup, never the cached pointer: repairUnits is a
+	// one-slot-per-target map, so a second repair task for the same target
+	// evicts the first from it -- the evicted task is then never aborted when
+	// the target dies and its cached `target` dangles (crashed a soak at 48
+	// game-minutes, 2026-08-15, IsRoleComm on a freed def). GetFriendlyUnit
+	// resolves a dead id to nullptr, which the null branch below already
+	// handles as the abort path.
+	CAllyUnit* repTarget = (targetId != -1) ? circuit->GetFriendlyUnit(targetId) : nullptr;
 
 	if ((repTarget != nullptr) && (repTarget->GetUnit()->GetHealth() < repTarget->GetUnit()->GetMaxHealth())) {
 		TRY_UNIT(circuit, unit,
 			unit->CmdPriority(ClampPriority());
-			unit->CmdRepair(repTarget, UNIT_CMD_OPTION, circuit->GetLastFrame() + FRAMES_PER_SEC * 60);
+			// INTERNAL_ORDER makes CBuilderCAI::ExecuteRepair apply its
+			// ally-wide CBuilderCaches::IsUnitBeingReclaimed veto to this order.
+			unit->CmdRepair(repTarget, UNIT_CMD_OPTION | UNIT_COMMAND_OPTION_INTERNAL_ORDER,
+					circuit->GetLastFrame() + FRAMES_PER_SEC * 60);
 		)
 
 		IUnitTask* task = repTarget->GetTask();

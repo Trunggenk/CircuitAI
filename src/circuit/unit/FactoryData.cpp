@@ -12,6 +12,7 @@
 #include "terrain/TerrainManager.h"
 #include "CircuitAI.h"
 #include "util/Utils.h"
+#include "Log.h"
 #include "json/json.h"
 
 #include <algorithm>
@@ -109,6 +110,15 @@ CCircuitDef* CFactoryData::GetFactoryToBuild(CCircuitAI* circuit, AIFloat3 posit
 		return percents[aId] > percents[bId];
 	};
 	std::sort(availFacs.begin(), availFacs.end(), cmp);
+	// apex: the opening pick was a black box -- "we *always* seem to start
+	// with botlabs" needed the actual candidate scores, not a guess. Start
+	// picks only, so this is a handful of lines per game.
+	if (isStart) {
+		for (CCircuitDef::Id facId : availFacs) {
+			circuit->LOG("apex: facpick %s = %.1f",
+					circuit->GetCircuitDef(facId)->GetDef()->GetName(), percents[facId]);
+		}
+	}
 #if 0
 	for (CCircuitDef::Id facId : availFacs) {
 		circuit->LOG("%s | %f", circuit->GetCircuitDef(facId)->GetDef()->GetName(), percents[facId]);

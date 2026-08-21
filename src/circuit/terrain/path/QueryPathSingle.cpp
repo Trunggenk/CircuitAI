@@ -34,7 +34,7 @@ void CQueryPathSingle::InitQuery(const AIFloat3& startPos, const AIFloat3& endPo
 
 void CQueryPathSingle::Prepare()
 {
-	pPath = std::make_shared<CPathInfo>(endPosOnly);
+	pPath = std::shared_ptr<CPathInfo>(new CPathInfo(endPosOnly));
 	if (hitTest == nullptr) {
 		hitTest = [](int2 start, int2 end) {
 			return true;

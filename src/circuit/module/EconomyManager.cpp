@@ -968,7 +968,7 @@ void CEconomyManager::SetOpenMexSpot(int spotId, bool value)
 // apex: the spot queries a script can reach. Script had no way to name a metal
 // spot, so a reroute could only trade between MEX tasks the engine had already
 // created.
-int CEconomyManager::FindOpenMexSpot(CCircuitUnit* unit, const AIFloat3& pos)
+int CEconomyManager::FindOpenMexSpot(CCircuitUnit* unit, const AIFloat3& pos, float maxThreat)
 {
 	CMetalManager* metalMgr = circuit->GetMetalManager();
 	if ((unit == nullptr) || !metalMgr->HasMetalSpots()
@@ -995,10 +995,13 @@ int CEconomyManager::FindOpenMexSpot(CCircuitUnit* unit, const AIFloat3& pos)
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	const CMetalData::Metals& spots = metalMgr->GetSpots();
 	CMap* map = circuit->GetMap();
-	CMetalData::PointPredicate predicate = [this, &spots, map, &mexDefs, terrainMgr, unit](int index) {
+	// apex: the threat ceiling is the CALLER's. CanReachAtSafe defaults to
+	// THREAT_MIN (1.0), which hides every contested spot -- so the mex want
+	// went silent exactly when the enemy was on the map and metal shortest.
+	CMetalData::PointPredicate predicate = [this, &spots, map, &mexDefs, terrainMgr, unit, maxThreat](int index) {
 		const AIFloat3& p = spots[index].position;
 		if (IsAllyOpenMexSpot(index) && !terrainMgr->IsZoneAlly(p)
-			&& terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance()))
+			&& terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance(), maxThreat))
 		{
 			for (CCircuitDef* mDef : mexDefs) {
 				if (terrainMgr->CanBeBuiltAt(mDef, p)
@@ -1047,6 +1050,151 @@ IBuilderTask* CEconomyManager::EnqueueMexAt(CCircuitUnit* unit, int spotId)
 	}
 	return circuit->GetBuilderManager()->Enqueue(TaskB::Spot(IBuilderTask::BuildType::MEX,
 			IBuilderTask::Priority::HIGH, mexDef, pos, spotId));
+}
+
+// apex: the position of a geo spot by id, across the init-parsed shared list
+// and this instance's late discoveries.
+const AIFloat3& CEconomyManager::GeoSpotPos(int spotId) const
+{
+	const CEnergyData::Geos& geos = circuit->GetEnergyManager()->GetSpots();
+	return ((size_t)spotId < geos.size()) ? geos[spotId]
+			: lateGeoSpots[spotId - geos.size()];
+}
+
+// apex: re-scan for vents the init parse could not see. GetFeatures() is
+// LOS-limited, and ParseGeoSpots runs once at AI birth -- before scouting --
+// so vents outside the start area never existed as spots. Appends only; the
+// shared CEnergyData stays untouched (other instances read it concurrently).
+void CEconomyManager::RescanGeoSpots()
+{
+	const int frame = circuit->GetLastFrame();
+	if (frame < nextGeoRescan) {
+		return;
+	}
+	nextGeoRescan = frame + FRAMES_PER_SEC * 120;
+	CCircuitDef* geoDef = GetSideInfo().geoDef;
+	if (geoDef == nullptr) {
+		return;
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	const unsigned width = circuit->GetMap()->GetWidth();
+	const unsigned height = circuit->GetMap()->GetHeight();
+	const int xsize = geoDef->GetDef()->GetXSize();
+	const int zsize = geoDef->GetDef()->GetZSize();
+	std::vector<Feature*> features = circuit->GetCallback()->GetFeatures();
+	for (Feature* feature : features) {
+		FeatureDef* featDef = feature->GetDef();
+		const bool isGeo = featDef->IsGeoThermal();
+		delete featDef;
+		if (!isGeo) {
+			continue;
+		}
+		AIFloat3 pos = feature->GetPosition();
+		const unsigned x1 = int(pos.x) / SQUARE_SIZE - (xsize / 2), x2 = x1 + xsize;
+		const unsigned z1 = int(pos.z) / SQUARE_SIZE - (zsize / 2), z2 = z1 + zsize;
+		if (!((x1 < x2) && (x2 < width) && (z1 < z2) && (z2 < height))
+			|| !terrainMgr->CanBeBuiltAt(geoDef, pos))
+		{
+			continue;
+		}
+		bool known = false;
+		const CEnergyData::Geos& geos = circuit->GetEnergyManager()->GetSpots();
+		for (const AIFloat3& p : geos) {
+			if (utils::is_equal_pos(p, pos)) { known = true; break; }
+		}
+		for (size_t i = 0; !known && (i < lateGeoSpots.size()); ++i) {
+			if (utils::is_equal_pos(lateGeoSpots[i], pos)) { known = true; }
+		}
+		if (!known) {
+			lateGeoSpots.push_back(pos);
+			geoSpots.push_back({true, false});
+		}
+	}
+	utils::free_clear(features);
+}
+
+// apex: geo spot queries a script can call safely, mirroring the mex trio
+// above. Deliberately no IsZoneAlly exclusion -- a geo vent at home is a
+// normal HomeEnergy candidate, not a frontier-only reroute.
+int CEconomyManager::FindOpenGeoSpot(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	if (unit == nullptr) {
+		return -1;
+	}
+	RescanGeoSpots();
+	const int frame = circuit->GetLastFrame();
+	std::vector<CCircuitDef*> geoCands;
+	for (CCircuitDef* gDef : geoDefs.GetBuildDefs(unit->GetCircuitDef())) {
+		if (gDef->IsAvailable(frame)) {
+			geoCands.push_back(gDef);
+		}
+	}
+	if (geoCands.empty()) {
+		return -1;
+	}
+
+	// CanReachAtSafe reads whichever threat layer was selected last, same as
+	// FindOpenMexSpot.
+	circuit->GetThreatMap()->SetThreatType(unit);
+
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CMap* map = circuit->GetMap();
+	float minDistSq = std::numeric_limits<float>::max();
+	int index = -1;
+	for (unsigned i = 0; i < geoSpots.size(); ++i) {
+		if (!IsOpenGeoSpot(i)) {
+			continue;
+		}
+		const AIFloat3& p = GeoSpotPos(i);
+		const float distSq = p.SqDistance2D(pos);
+		if (minDistSq <= distSq) {
+			continue;
+		}
+		if (!terrainMgr->CanReachAtSafe(unit, p, unit->GetCircuitDef()->GetBuildDistance())) {
+			continue;
+		}
+		for (CCircuitDef* gDef : geoCands) {
+			if (terrainMgr->CanBeBuiltAt(gDef, p) && map->IsPossibleToBuildAt(gDef->GetDef(), p, UNIT_NO_FACING)) {
+				minDistSq = distSq;
+				index = i;
+				break;
+			}
+		}
+	}
+	return index;
+}
+
+AIFloat3 CEconomyManager::GetGeoSpotPos(int spotId) const
+{
+	if (!IsValidGeoSpot(spotId)) {
+		return -RgtVector;
+	}
+	return circuit->GetEnergyManager()->GetSpots()[spotId];
+}
+
+IBuilderTask* CEconomyManager::EnqueueGeoAt(CCircuitUnit* unit, int spotId)
+{
+	if ((unit == nullptr) || !IsValidGeoSpot(spotId) || !IsOpenGeoSpot(spotId)) {
+		return nullptr;
+	}
+	const AIFloat3& pos = GeoSpotPos(spotId);
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	CMap* map = circuit->GetMap();
+	const int frame = circuit->GetLastFrame();
+	CCircuitDef* geoDef = nullptr;
+	for (CCircuitDef* gDef : geoDefs.GetBuildDefs(unit->GetCircuitDef())) {
+		if (gDef->IsAvailable(frame) && terrainMgr->CanBeBuiltAt(gDef, pos)
+			&& map->IsPossibleToBuildAt(gDef->GetDef(), pos, UNIT_NO_FACING))
+		{
+			geoDef = gDef;
+			break;
+		}
+	}
+	if (geoDef == nullptr) {
+		return nullptr;
+	}
+	return circuit->GetBuilderManager()->Enqueue(TaskB::Spot(IBuilderTask::BuildType::GEO,
+			IBuilderTask::Priority::NORMAL, geoDef, pos, spotId));
 }
 
 bool CEconomyManager::IsIgnorePull(const IBuilderTask* task) const
@@ -1541,6 +1689,11 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 {
 	ZoneScoped;
 
+	// DISABLED 2026-08-14: a second, uncoordinated def-picker for energy
+	// (economy.json-driven, randomized per-def limits) competing with the
+	// AngelScript ladder in HomeEnergy/EnergyValuePerMetal. See CHANGES.md.
+	return nullptr;
+
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (!builderMgr->CanEnqueueTask(32)) {
 		return nullptr;
@@ -1703,14 +1856,14 @@ IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuit
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
 	CMap* map = circuit->GetMap();
 	CCircuitDef* geoDef = geoDefs.GetFirstDef();
-	const CEnergyData::Geos& geos = circuit->GetEnergyManager()->GetSpots();
 	float minDistSq = std::numeric_limits<float>::max();
 	int index = -1;
 	for (unsigned i = 0; i < geoSpots.size(); ++i) {
-		const float distSq = geos[i].SqDistance2D(position);
+		const AIFloat3& gp = GeoSpotPos(i);
+		const float distSq = gp.SqDistance2D(position);
 		if (IsOpenGeoSpot(i) && (minDistSq > distSq)
-			&& !terrainMgr->IsZoneAlly(geos[i]) && terrainMgr->CanBeBuiltAtSafe(geoDef, geos[i])
-			&& map->IsPossibleToBuildAt(geoDef->GetDef(), geos[i], UNIT_NO_FACING))  // lazy check for allies
+			&& !terrainMgr->IsZoneAlly(gp) && terrainMgr->CanBeBuiltAtSafe(geoDef, gp)
+			&& map->IsPossibleToBuildAt(geoDef->GetDef(), gp, UNIT_NO_FACING))  // lazy check for allies
 		{
 			minDistSq = distSq;
 			index = i;
@@ -1726,7 +1879,7 @@ IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuit
 	const float maxCostM = metalIncome * builderMgr->GetGoalExecTime();
 	const float maxCostE = energyIncome * builderMgr->GetGoalExecTime();
 
-	const AIFloat3& pos = geos[index];
+	const AIFloat3& pos = GeoSpotPos(index);
 	const int frame = circuit->GetLastFrame();
 	geoDef = geoDefs.GetBestDef([frame, terrainMgr, &pos, maxCostM, maxCostE](CCircuitDef* cdef, const SGeoExt& data) {
 		return cdef->IsAvailable(frame) && (cdef->GetCostM() < maxCostM) && (cdef->GetCostE() < maxCostE)
@@ -1778,6 +1931,25 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCir
 	}
 
 	const bool isStart = (factoryMgr->GetFactoryCount() == 0);
+	// apex: RE-ASK THE GATE FOR A HELD PICK. PickNextFactory consults the
+	// script's plant gate ONCE, then parks the choice in factoryTask as an
+	// inactive task. Activation below is gated on income, not on the gate, so a
+	// def approved while we owned no lab was still built minutes later once
+	// income crossed miRequire -- which is why a second T1 lab appeared at a
+	// consistent ~30 metal/s no matter how often the gate itself was fixed
+	// (apexearth, a few dozen reports; ISSUES.md "a sixth gate entrance").
+	// The pick is re-validated here so a stale approval cannot outlive the
+	// conditions that granted it.
+	if (factoryTask != nullptr) {
+		CCircuitDef* heldDef = factoryTask->GetBuildDef();
+		if ((heldDef != nullptr)
+			&& (factoryMgr->GetFactoryToBuild(position, isStart) != heldDef))
+		{
+			builderMgr->AbortTask(factoryTask);
+			factoryTask->ClearRelease();
+			factoryTask = nullptr;
+		}
+	}
 	if ((factoryTask == nullptr) && (PickNextFactory(position, isStart) == nullptr)) {
 		return nullptr;
 	}

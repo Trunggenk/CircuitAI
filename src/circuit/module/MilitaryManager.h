@@ -122,6 +122,11 @@ public:
 	void MakeDefence(int cluster);
 	void MakeDefence(int cluster, const springai::AIFloat3& pos);
 	void DefaultMakeDefence(int cluster, const springai::AIFloat3& pos);
+	// Sensors only, without any of DefaultMakeDefence's tower placement. The
+	// script's AiMakeDefence returns early on clusters it declines to porc, and
+	// the sensor block lives at the end of DefaultMakeDefence, so those clusters
+	// used to get no radar either.
+	void DefaultMakeSensors(int cluster, const springai::AIFloat3& pos);
 	void MarkPorc(CCircuitUnit* unit, int defPointId);
 	void UnmarkPorc(CCircuitUnit* unit);
 	void AbortDefence(const CBDefenceTask* task, int defPointId);
@@ -130,6 +135,12 @@ public:
 	springai::AIFloat3 GetScoutPosition(CCircuitUnit* unit);
 	void ClearScoutPosition(IUnitTask* task);
 	bool GetGuardAnchor(springai::AIFloat3& outPos) const;
+	// Per-pool anchor. `assigned` is parallel to CCircuitAI::GetHotSpots() and
+	// holds the power already sent to each spot this pass, so a spot that is
+	// covered stops attracting the next pool; the chosen index comes back in
+	// outSpot for the caller to add to.
+	bool GetGuardAnchor(const springai::AIFloat3& from, const std::vector<float>& assigned,
+			springai::AIFloat3& outPos, int& outSpot) const;
 	void FillFrontPos(CCircuitUnit* unit, F3Vec& outPositions);
 	void FillDefencePos(CCircuitUnit* unit, F3Vec& outPositions);
 	springai::AIFloat3 GetDefenceStand();
@@ -217,6 +228,7 @@ private:
 	CDefenceData::SDefPoint* FindClosestDefPoint(const springai::AIFloat3& pos);
 	CDefenceData::SDefPoint* FindClosestDefPoint(int cluster, const springai::AIFloat3& pos,
 			std::function<bool (const CDefenceData::SDefPoint&)> predicate = nullptr);
+	void MakeSensors(const springai::AIFloat3& backPos, float maxCost, float radiusMod, bool isWater);
 
 	Handlers2 createdHandler;
 	Handlers1 finishedHandler;

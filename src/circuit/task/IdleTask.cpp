@@ -7,6 +7,7 @@
 
 #include "task/IdleTask.h"
 #include "task/RetreatTask.h"
+#include "map/InfluenceMap.h"
 #include "module/TaskModule.h"
 #include "unit/CircuitUnit.h"
 #include "CircuitAI.h"
@@ -60,6 +61,15 @@ void CIdleTask::Update()
 	while (it != updateUnits.end()) {
 		CCircuitUnit* ass = *it;
 
+		// Zombies (deferred-deleted dead units, CCircuitAI::deadUnits) can
+		// arrive here through stale task memberships; drain them, never
+		// hand them to MakeTask.
+		if (ass->IsDead()) {
+			units.erase(ass);
+			it = updateUnits.erase(it);
+			continue;
+		}
+
 		// get rid of delayed by engine UnitIdle event from previous task
 		if (frame < ass->GetTaskFrame() + 20) {
 			++it;
@@ -68,8 +78,20 @@ void CIdleTask::Update()
 
 		it = updateUnits.erase(it);
 
-		manager->AssignTask(ass);  // should RemoveAssignee() on AssignTo()
-		ass->GetTask()->Start(ass);
+		// The task comes back from AssignTask itself, with a reference
+		// transferred -- never re-read ass->GetTask() here: AssignTask runs
+		// script (AiMakeTask, TaskAssigned) which can abort or complete
+		// tasks, and the unit's bare task pointer is not refcounted. The
+		// previous AddRef bracket around a re-read pointer still crashed
+		// (2026-08-15, frame 47331, null vtable call at Start): AddRef on an
+		// already-freed object protects nothing.
+		IUnitTask* task = manager->AssignTask(ass);  // should RemoveAssignee() on AssignTo()
+		if (task != nullptr) {
+			if (!task->IsDead()) {
+				task->Start(ass);
+			}
+			task->Release();
+		}
 
 		if (++i >= updateSlice) {
 			break;
@@ -94,6 +116,20 @@ void CIdleTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
 	const float healthPerc = unit->GetHealthPercent();
 	if (healthPerc < unit->GetCircuitDef()->GetRetreat()) {
+		// AT HOME, A FIGHTER STANDS. Units touch IDLE constantly between task
+		// assignments, and one hit under the (high, 0.5-0.85) retreat bar sent
+		// each on a solo retreat THROUGH its own base -- the audited fwd~0.15
+		// retreat deaths that persisted after both squad-level fixes. The
+		// militia pool re-tasks an idle unit within a second; running is what
+		// killed them. Builders keep the retreat: their job is not fighting.
+		CCircuitAI* circuit = manager->GetCircuit();
+		// Defend influence (buildings only) -- ally influence includes nearby
+		// mobile army and read "home" in the open field. See TrySquadRetreat.
+		if (unit->GetCircuitDef()->IsAttacker()
+			&& (circuit->GetInflMap()->GetAllyDefendInflAt(
+					unit->GetPos(circuit->GetLastFrame())) > INFL_EPS)) {
+			return;
+		}
 		CRetreatTask* task = manager->EnqueueRetreat();
 		if (task != nullptr) {
 			task->AssignTo(unit);

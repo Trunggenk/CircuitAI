@@ -30,9 +30,12 @@ ITaskModule::ITaskModule(CCircuitAI* circuit, IScript* script)
 
 ITaskModule::~ITaskModule()
 {
-	delete nilTask;
-	delete idleTask;
-	delete playerTask;
+	// Release, not delete: units hold counted references to their current
+	// task (CCircuitUnit::SetTask), nil/idle/player included -- a plain
+	// delete here frees an object somebody may still Release later.
+	if (nilTask != nullptr) { nilTask->ClearPermanent(); nilTask->Release(); }
+	if (idleTask != nullptr) { idleTask->ClearPermanent(); idleTask->Release(); }
+	if (playerTask != nullptr) { playerTask->ClearPermanent(); playerTask->Release(); }
 
 	for (IUnitTask* task : updateTasks) {
 		task->ClearRelease();
@@ -44,6 +47,9 @@ void ITaskModule::Init()
 	nilTask = new CNilTask(this);
 	idleTask = new CIdleTask(this);
 	playerTask = new CPlayerTask(this);
+	nilTask->SetPermanent();
+	idleTask->SetPermanent();
+	playerTask->SetPermanent();
 }
 
 void ITaskModule::Release()
@@ -62,24 +68,77 @@ void ITaskModule::Release()
 
 void ITaskModule::AssignTask(CCircuitUnit* unit, IUnitTask* task)
 {
-	unit->GetTask()->RemoveAssignee(unit);
+	// Same guard as DequeueTask below: task->Start(unit) can run script
+	// (Start() dispatches through the task hierarchy, and several task types
+	// call into script-visible state from there), and RemoveAssignee/AssignTo
+	// give script two more chances to drop a reference before Start() runs.
+	// Hold our own across the whole sequence.
+	if (task->IsDead()) {
+		return;  // assigning a dead task re-animates a zombie; see below
+	}
+	task->AddRef();
+	// Bracket the CURRENT task too: RemoveAssignee moves the unit to idle,
+	// and if the unit held the task's last reference, SetTask(idle)'s Release
+	// deletes it MID-CALL -- symbolized live (mirror loop, 2026-08-15) as an
+	// AV on `this->units` right after the idle AssignTo returned.
+	IUnitTask* cur = unit->GetTask();
+	if (cur != nullptr) {
+		cur->AddRef();
+		cur->RemoveAssignee(unit);
+		cur->Release();
+	}
 	task->AssignTo(unit);
 	task->Start(unit);
+	task->Release();
 }
 
-void ITaskModule::AssignTask(CCircuitUnit* unit)
+IUnitTask* ITaskModule::AssignTask(CCircuitUnit* unit)
 {
+	// MakeTask(unit) runs the script's AiMakeTask top to bottom -- confirmed
+	// live as a second instance of the DequeueTask bug (same
+	// IRefCounter::Release() -> delete this signature, this call chain
+	// instead): whatever script does while computing an answer can drop the
+	// last reference to some OTHER tracked task, and if the returned task
+	// itself is affected the same way, AssignTo(unit) below dereferences it
+	// freed. AddRef the moment we have it, for the same reason DequeueTask
+	// does.
 	IUnitTask* task = MakeTask(unit);
-	if (task != nullptr) {
-		task->AssignTo(unit);
+	// A DEAD task must never be assigned: script-side re-election caches can
+	// return a task that was aborted since it was remembered, and AssignTo
+	// would hand the unit a task no queue owns -- the unit's reference becomes
+	// the last one, and the next reassignment frees the task mid-
+	// RemoveAssignee (the mirror-loop crash family).
+	if ((task != nullptr) && task->IsDead()) {
+		return nullptr;
 	}
+	if (task != nullptr) {
+		task->AddRef();
+		task->AssignTo(unit);
+		// The reference is NOT released here: it transfers to the caller, so
+		// the returned pointer is guaranteed alive however much script ran
+		// during AssignTo. See the declaration's comment.
+	}
+	return task;
 }
 
 void ITaskModule::DequeueTask(IUnitTask* task, bool done)
 {
+	// TaskRemoved() runs the script's AiTaskRemoved callback, which can hold
+	// the only remaining AngelScript-side reference to this task (e.g. the
+	// last element removed from a tracking array). IUnitTask is asOBJ_REF
+	// with intrusive refcounting (RefCounter.cpp) -- if that callback drops
+	// the last script reference, Release() deletes the object right there,
+	// and task->Stop(done) below becomes a use-after-free on this function's
+	// own raw pointer. Confirmed live: symbolized crash at exactly this line
+	// (IRefCounter::Release() -> delete this, reached through the script
+	// callback, native frame resuming into the freed object). Holding our
+	// own reference across the callback is the same guarantee AngelScript's
+	// own handle assignment already gives every other caller.
+	task->AddRef();
 	task->Dead();
 	TaskRemoved(task, done);
 	task->Stop(done);
+	task->Release();
 }
 
 IUnitTask* ITaskModule::MakeTask(CCircuitUnit* unit)

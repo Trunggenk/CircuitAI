@@ -10,6 +10,8 @@
 
 #include "terrain/path/PathFinder.h"
 
+#include <cstddef>
+
 namespace circuit {
 
 class CCircuitUnit;
@@ -18,6 +20,11 @@ class IPathQuery {
 public:
 	enum class Type: char {NONE = 0, SINGLE, MULTI, WIDE, COST, LINE, _SIZE_};
 	enum class State: char {NONE = 0, PROCESS, READY, _SIZE_};
+
+	// CRASH DIAGNOSTIC (temporary): guard-page allocation; delete decommits
+	// but keeps the address reserved. Defined in the matching .cpp.
+	static void* operator new(std::size_t sz);
+	static void operator delete(void* p);
 
 protected:
 	IPathQuery(const CPathFinder& pathfinder, int id, Type type);

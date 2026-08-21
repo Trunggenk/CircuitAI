@@ -16,6 +16,7 @@
 #include <memory>
 #include <unordered_map>
 #include <map>
+#include <algorithm>
 #include <set>
 #include <vector>
 
@@ -64,6 +65,7 @@ class CScheduler;
 class IModule;
 class CCircuitUnit;
 class CEnemyInfo;
+class IRefCounter;
 class COOAICallback;
 class CEngine;
 class CMap;
@@ -196,11 +198,20 @@ public:
 	bool IsCommanderWreck(springai::Feature* f);
 	// Recent kills/losses by metal value; see NoteTrade in the .cpp.
 	void NoteTrade(bool isKill, CCircuitDef* cdef);
-	// WHERE we are losing units, as a cost-weighted decaying centroid. The AI
-	// had no location for incoming attacks at all -- ApproachThreat() is a
-	// global scalar -- so defence was placed by geometry alone.
+	// WHERE we are losing units, cost-weighted and decaying. The AI had no
+	// location for incoming attacks at all -- ApproachThreat() is a global
+	// scalar -- so defence was placed by geometry alone.
 	void NoteLossAt(const springai::AIFloat3& pos, float costM);
 	bool GetAttackHotspot(springai::AIFloat3& outPos, float& outWeight);
+	// One place we are being hit. Several fights run at once, so the losses are
+	// kept as a small set of spots rather than one centroid: two breaches
+	// averaged to a point between them that was neither.
+	struct SHotSpot {
+		springai::AIFloat3 pos = ZeroVector;
+		float weight = .0f;
+	};
+	// Decayed as a side effect, exactly as GetAttackHotspot is.
+	const std::vector<SHotSpot>& GetHotSpots();
 	// BWEM chokepoints. Computed every game by CGridAnalyzer and, until now,
 	// reachable from nowhere: DefenceData pushes them into defPoints but every
 	// consumer selects via GetDefIndices(cluster), which only ever indexes the
@@ -234,6 +245,10 @@ public:
 	void SetBaseGrid(const springai::AIFloat3& anchor, const springai::AIFloat3& fwd,
 			float cell, float lanePitch, float laneHalf, float range);
 	bool SnapToBaseGrid(const springai::AIFloat3& pos, springai::AIFloat3& outPos) const;
+	// Cardinal facing along the published axis for a position inside the base,
+	// or UNIT_NO_FACING when the grid does not apply. Factories use it so their
+	// exit apron opens onto the road to the front instead of the map centre.
+	int GetBaseGridFacing(const springai::AIFloat3& pos) const;
 	// In-game map markers, for watching what the AI believes. These are ordinary
 	// map points/lines: allies and spectators see them, so anything using these
 	// must stay off by default outside a debug watch.
@@ -272,6 +287,12 @@ public:
 	// cannot answer "what of ours is standing in the way" -- it only answers it
 	// for the factions someone remembered to list.
 	std::vector<CCircuitUnit*> GetOwnStructsNear(const springai::AIFloat3& pos, float radius);
+	// Our own damaged MOBILE units near pos, whatever their def. BuilderManager
+	// never registers a damagedHandler for ordinary combat unit defs (only for
+	// builders/rez-bots themselves and for static structures), so nothing ever
+	// creates a REPAIR task for a hurt tank standing in the field -- the script
+	// has to find one itself.
+	std::vector<CCircuitUnit*> GetOwnDamagedNear(const springai::AIFloat3& pos, float radius);
 	// Engine path length for this unit's move type, or -1 when there is no path.
 	// CircuitAI's own areas come from CTerrainData and are terrain-only, so a
 	// pocket walled in by BUILDINGS is invisible to CanMoveToPos. The engine's
@@ -309,7 +330,14 @@ public:
 	bool UnitControl(CCircuitUnit* unit, bool isEnable);
 	bool UnitControl(ICoreUnit::Id unitId, bool isEnable) { return UnitControl(GetTeamUnit(unitId), isEnable); }
 
-	void AddActionUnit(CCircuitUnit* unit) { actionUnits.push_back(unit); }
+	// Dedupe: a unit listed twice is reaped twice on death -- double delete,
+	// double task->Release, and the heap corruption that took Lua down with
+	// it (cushion-trap stack: UpdateActions -> ~CCircuitUnit -> Release).
+	void AddActionUnit(CCircuitUnit* unit) {
+		if (std::find(actionUnits.begin(), actionUnits.end(), unit) == actionUnits.end()) {
+			actionUnits.push_back(unit);
+		}
+	}
 
 private:
 	void UpdateActions();
@@ -323,6 +351,24 @@ private:
 	unsigned int actionIterator;
 
 	std::set<CCircuitUnit*> garbage;
+	// Dead units are parked here instead of freed: task `units` sets can hold
+	// stale memberships past UnitDestroyed (observed live: CSRepairTask
+	// iterating a freed unit, and SetTask on freed unit memory double-releasing
+	// a manager's idleTask to destruction — the Lua-heap-corruption crash
+	// family). A zombie unit keeps valid memory: stale touches become inert
+	// (TRY_UNIT absorbs dead-engine-unit commands) and refcounts stay honest.
+	// Freed in Release(). A set so a double reap cannot park a unit twice.
+	std::set<CCircuitUnit*> deadUnits;
+
+public:
+	// Deferred reference drops: CCircuitUnit::SetTask parks the old task's
+	// Release here instead of running it inline, because the unit's reference
+	// can be the task's LAST and inline Release deletes the task while its own
+	// RemoveAssignee/Stop is still executing. Drained at the top of Update().
+	void DeferRelease(circuit::IRefCounter* obj) { deferredReleases.push_back(obj); }
+private:
+	void DrainDeferredReleases();
+	std::vector<circuit::IRefCounter*> deferredReleases;
 // <<< Units ---- END
 
 // >>> AIOptions.lua ---- BEGIN
@@ -367,9 +413,10 @@ private:
 	#define HOT_DECAY_PERIOD	(FRAMES_PER_SEC * 20)
 	#define HOT_DECAY			0.80f   // ~1 min half-life
 	#define HOT_MIN_WEIGHT		250.f   // metal lost before the spot means anything
-	springai::AIFloat3 hotSum = ZeroVector;   // cost-weighted position sum
-	float hotWeight = .0f;
+	#define HOT_SPOT_NUM		8
+	std::vector<SHotSpot> hotSpots;
 	int hotDecayFrame = 0;
+	void DecayHotSpots();
 	bool isCommitted = false;
 // <<< Recent trade record ---- END
 
@@ -485,6 +532,14 @@ private:
 	bool isResigned : 1;
 	bool isSlave : 1;
 	int lastFrame;
+	// apex: whole-AI frame cost (scheduler jobs, threat/infl maps, task
+	// reevaluation, actions) as one bucket beside the script-only timers.
+	uint64_t perfFrameUs = 0;
+	uint64_t perfFrameMaxUs = 0;
+	unsigned perfFrameCalls = 0;
+	int perfFrameNextLog = 0;
+	int squadDiagNextLog = 0;
+	int ghostPurgeNext = 0;
 	int skirmishAIId;
 	int teamId;
 	int allyTeamId;

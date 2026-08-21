@@ -5,6 +5,7 @@
  *      Author: rlcevg
  */
 
+#include <mutex>
 #include "script/ScriptManager.h"
 #ifdef DEBUG_VIS
 #include "script/Script.h"
@@ -50,6 +51,14 @@ CScriptManager::~CScriptManager()
 
 void CScriptManager::Init()
 {
+	// apex: AngelScript's documented contract (as_thread.cpp): call
+	// asPrepareMultithread() before any other thread creates a script engine,
+	// or the shared thread manager's unguarded first-AddRef races. Multiple AI
+	// instances create engines on their own threads inside this one DLL; a 1v1
+	// elimination could destroy the manager the surviving instance was locking
+	// (2026-08-18 commander-blast crash). Once per process, never unprepared.
+	static std::once_flag prepareThreads;
+	std::call_once(prepareThreads, []() { asPrepareMultithread(); });
 	// Create the script engine
 	engine = asCreateScriptEngine(ANGELSCRIPT_VERSION);
 	// Set the message callback to receive information on errors in human readable form.

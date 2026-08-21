@@ -35,7 +35,7 @@ void CNilTask::AssignTo(CCircuitUnit* unit)
 
 void CNilTask::RemoveAssignee(CCircuitUnit* unit)
 {
-	unit->Clear();
+	unit->ClearAct();  // NOT the inherited CActionList::Clear -- that deletes the actions but leaves dgunAct/travelAct dangling (the heap-corruption writer)
 }
 
 void CNilTask::Start(CCircuitUnit* unit)

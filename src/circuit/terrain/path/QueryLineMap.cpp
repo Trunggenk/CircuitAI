@@ -32,6 +32,16 @@ void CQueryLineMap::InitQuery(int threatXSize, int squareSize)
  */
 bool CQueryLineMap::IsSafeLine(const AIFloat3& startPos, const AIFloat3& endPos) const
 {
+	return IsSafeLine(startPos, endPos, THREAT_MIN);
+}
+
+// apex: THREAT_MIN refused a line the moment ONE tile carried any threat, which
+// on a contested midfield is every line between two squad leaders -- merges
+// were refused exactly when the fighting made them necessary (measured squads
+// of 1-2 at minutes 3-10). The caller passes a ceiling sized to what the
+// merged squad can actually walk through.
+bool CQueryLineMap::IsSafeLine(const AIFloat3& startPos, const AIFloat3& endPos, float maxThreat) const
+{
 	int2 start(startPos.x / squareSize, startPos.z / squareSize);
 	int2 end(endPos.x / squareSize, endPos.z / squareSize);
 	// All octant line draw
@@ -51,7 +61,7 @@ bool CQueryLineMap::IsSafeLine(const AIFloat3& startPos, const AIFloat3& endPos)
 
 		int index2 = y * threatXSize + x;
 		int index = (y + 1) * (threatXSize + 2) + x + 1;  // move-index, +2 for edges, index = (y + 1) * (threatXSize + 2) + x + 1;
-		if (!canMoveArray[index] || (threatArray[index2] > THREAT_MIN)) {
+		if (!canMoveArray[index] || (threatArray[index2] > maxThreat)) {
 			return false;
 		}
 	}

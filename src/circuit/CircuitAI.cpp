@@ -22,8 +22,10 @@
 #include "map/InfluenceMap.h"   // unconditionally: the DEBUG_VIS include below is gated
 #include "terrain/path/PathFinder.h"
 #include "task/PlayerTask.h"
+#include "task/fighter/FighterTask.h"
 #include "unit/CircuitUnit.h"
 #include "unit/enemy/EnemyUnit.h"
+#include "unit/enemy/EnemyManager.h"
 #include "util/GameAttribute.h"
 #include "util/Utils.h"
 #include "util/Profiler.h"
@@ -60,6 +62,9 @@
 //#include "WrappCurrentCommand.h"
 
 #include <fstream>
+#include <limits>
+#include <chrono>
+#include <algorithm>
 
 namespace circuit {
 
@@ -384,6 +389,11 @@ int CCircuitAI::HandleGameEvent(int topic, const void* data)
 			struct SEnemyDestroyedEvent* evt = (struct SEnemyDestroyedEvent*)data;
 			CEnemyInfo* enemy = GetEnemyInfo(evt->enemy);
 			if (enemy != nullptr) {
+				// Here, not in the deferred EnemyDestroyed: the attacker id only
+				// exists in this event, and a non-(-1) attacker is by contract
+				// allied with us -- ours iff it is one of our team units.
+				script->EnemyDestroyed(enemy->GetCircuitDef(), enemy->GetPos(),
+						GetTeamUnit(evt->attacker) != nullptr);
 				allyTeam->DyingEnemy(enemy->GetData(), lastFrame);
 				ret = 0;
 			} else {
@@ -792,6 +802,7 @@ int CCircuitAI::Release(int reason)
 	enemyManager = nullptr;
 	mapManager = nullptr;
 
+	DrainDeferredReleases();  // before the unit dtors below release into it again
 	for (CCircuitUnit* unit : actionUnits) {
 		if (unit->IsDead()) {  // instance is not in teamUnits
 			delete unit;
@@ -803,6 +814,10 @@ int CCircuitAI::Release(int reason)
 	}
 	teamUnits.clear();
 	garbage.clear();
+	for (CCircuitUnit* unit : deadUnits) {
+		delete unit;
+	}
+	deadUnits.clear();
 	for (auto& kv : enemyInfos) {
 		delete kv.second;
 	}
@@ -824,9 +839,24 @@ int CCircuitAI::Release(int reason)
 	return 0;  // signaling: OK
 }
 
+void CCircuitAI::DrainDeferredReleases()
+{
+	// Swap first: a Release can run dtors that defer further releases.
+	std::vector<IRefCounter*> drain;
+	while (!deferredReleases.empty()) {
+		drain.swap(deferredReleases);
+		for (IRefCounter* obj : drain) {
+			obj->Release();
+		}
+		drain.clear();
+	}
+}
+
 int CCircuitAI::Update(int frame)
 {
+	const auto perfT0 = std::chrono::steady_clock::now();
 	destroyed.clear();
+	DrainDeferredReleases();
 	lastFrame = frame;
 	if (isResigned) {
 		Release(RELEASE_RESIGN);
@@ -866,6 +896,73 @@ int CCircuitAI::Update(int frame)
 		debugDrawer->Refresh();
 	}
 #endif
+
+	// apex: squad sizes, ours against the enemy's, on one comparable line per
+	// 30s. Ours = units on ATTACK/DEFEND tasks; theirs = mobile armed units per
+	// enemy cluster -- the mass that actually arrives, whatever their AI calls it.
+	// apex: purge stale enemy ghosts, once per ally team (the registry is
+	// shared) on a slow cadence. See CEnemyManager::PurgeStaleGhosts.
+	if ((frame >= ghostPurgeNext) && (enemyManager != nullptr) && (allyTeam != nullptr)
+		&& (allyTeam->GetLeaderId() == skirmishAIId))
+	{
+		ghostPurgeNext = frame + FRAMES_PER_SEC * 30;
+		const int confirmedAge = (int)(GetTunable("apex_ghost_purge_secs", 90.f)
+				* FRAMES_PER_SEC);
+		const int unknownAge = (int)(GetTunable("apex_ghost_stale_min", 15.f)
+				* 60.f * FRAMES_PER_SEC);
+		enemyManager->PurgeStaleGhosts(frame, confirmedAge, unknownAge);
+	}
+	if ((frame >= squadDiagNextLog) && (militaryManager != nullptr) && (enemyManager != nullptr)) {
+		squadDiagNextLog = frame + 900;
+		int nOwn = 0, uOwn = 0, mOwn = 0;
+		for (IFighterTask::FightType t : {IFighterTask::FightType::ATTACK, IFighterTask::FightType::DEFEND}) {
+			for (IFighterTask* ft : militaryManager->GetTasks(t)) {
+				const int s = (int)ft->GetAssignees().size();
+				if (s <= 0) {
+					continue;
+				}
+				++nOwn;
+				uOwn += s;
+				mOwn = std::max(mOwn, s);
+			}
+		}
+		int nE = 0, uE = 0, mE = 0;
+		for (const CEnemyManager::SEnemyGroup& g : enemyManager->GetEnemyGroups()) {
+			int s = 0;
+			for (const ICoreUnit::Id eId : g.units) {
+				CEnemyInfo* e = GetEnemyInfo(eId);
+				if ((e != nullptr) && (e->GetCircuitDef() != nullptr)
+					&& e->GetCircuitDef()->IsMobile() && e->GetCircuitDef()->IsAttacker()) {
+					++s;
+				}
+			}
+			if (s <= 0) {
+				continue;
+			}
+			++nE;
+			uE += s;
+			mE = std::max(mE, s);
+		}
+		LOG("apex: squadsize own n=%i avg=%.1f max=%i | enemy n=%i avg=%.1f max=%i",
+				nOwn, (nOwn > 0) ? float(uOwn) / nOwn : 0.f, mOwn,
+				nE, (nE > 0) ? float(uE) / nE : 0.f, mE);
+	}
+
+	const uint64_t perfUs = std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - perfT0).count();
+	perfFrameUs += perfUs;
+	perfFrameMaxUs = std::max(perfFrameMaxUs, perfUs);
+	++perfFrameCalls;
+	if (frame >= perfFrameNextLog) {
+		perfFrameNextLog = frame + 1800;   // one game-minute at 30 fps
+		LOG("apex: perf AiFrame calls=%u totalMs=%.1f avgUs=%.0f maxMs=%.1f",
+				perfFrameCalls, perfFrameUs / 1000.f,
+				(perfFrameCalls > 0) ? float(perfFrameUs) / float(perfFrameCalls) : 0.f,
+				perfFrameMaxUs / 1000.f);
+		perfFrameUs = 0;
+		perfFrameMaxUs = 0;
+		perfFrameCalls = 0;
+	}
 
 	return 0;  // signaling: OK
 }
@@ -1183,19 +1280,34 @@ int CCircuitAI::UnitDamaged(CCircuitUnit* unit, ICoreUnit::Id attackerId, int we
 
 int CCircuitAI::UnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 {
-	destroyed.insert(unit->GetId());
-	NoteTrade(false, unit->GetCircuitDef());
-	// Feeds the attack hotspot: where we are losing things is the best evidence
-	// available of where the enemy actually is.
-	if (unit->GetCircuitDef() != nullptr) {
-		NoteLossAt(unit->GetPos(GetLastFrame()), unit->GetCircuitDef()->GetCostM());
+	// insert().second: this is called repeatedly for a unit already dead
+	// (measured: one nano's id logged 2,350 times over three minutes, pos
+	// (1,1)) -- the set existed but nothing checked it. First call only.
+	const bool firstDeath = destroyed.insert(unit->GetId()).second;
+	if (firstDeath) {
+		NoteTrade(false, unit->GetCircuitDef());
+		// Feeds the attack hotspot: where we are losing things is the best
+		// evidence available of where the enemy actually is. (Repeated calls
+		// were also multiplying this and NoteTrade -- pre-existing.)
+		if (unit->GetCircuitDef() != nullptr) {
+			NoteLossAt(unit->GetPos(GetLastFrame()), unit->GetCircuitDef()->GetCostM());
+		}
+		// BEFORE the modules: their UnitDestroyed strips the unit's task
+		// (task->OnUnitDestroyed -> RemoveAssignee -> reassigned idle/nil),
+		// so the script hook fired after them read every death as "idle".
+		// The script only does bookkeeping; it needs the task the unit
+		// actually died holding.
+		script->UnitDestroyed(unit);
+		// Attribution rides a separate optional callback; only fired when the
+		// attacker's def is actually known (see CInitScript::UnitDestroyedBy).
+		if (attacker != nullptr) {
+			script->UnitDestroyedBy(unit, attacker->GetCircuitDef());
+		}
 	}
+
 	for (auto& module : modules) {
 		module->UnitDestroyed(unit, attacker);
 	}
-
-	// FIXME: Experimental. Remove?
-	script->UnitDestroyed(unit);
 
 	return 0;  // signaling: OK
 }
@@ -1509,7 +1621,7 @@ void CCircuitAI::UnregisterTeamUnit(CCircuitUnit* unit)
 void CCircuitAI::DeleteTeamUnit(CCircuitUnit* unit)
 {
 	garbage.erase(unit);
-	delete unit;
+	deadUnits.insert(unit);  // deferred to Release(); see deadUnits decl
 }
 
 float CCircuitAI::GetTeamMetalFill(int otherTeamId) const
@@ -1712,6 +1824,35 @@ void CCircuitAI::SetBaseGrid(const AIFloat3& anchor, const AIFloat3& fwd,
 	gridRange = range;
 }
 
+int CCircuitAI::GetBaseGridFacing(const AIFloat3& pos) const
+{
+	if ((gridCell <= .0f) || !utils::is_valid(gridAnchor) || !utils::is_valid(pos)) {
+		return UNIT_NO_FACING;
+	}
+	const float dx = pos.x - gridAnchor.x;
+	const float dz = pos.z - gridAnchor.z;
+	if ((dx * dx + dz * dz) > (gridRange * gridRange)) {
+		return UNIT_NO_FACING;
+	}
+	// The ENEMY bearing, not the band axis: the axis may legally 180-flip for
+	// band room (a corner start scores double the buildable cells facing away),
+	// and a factory obeying the flipped axis exits into the map edge. gridFwd
+	// is only the fallback while no enemy has been seen.
+	float fx = gridFwd.x, fz = gridFwd.z;
+	const AIFloat3& foe = enemyManager->GetEnemyPos();
+	if (utils::is_valid(foe)) {
+		const float ex = foe.x - gridAnchor.x;
+		const float ez = foe.z - gridAnchor.z;
+		if ((ex * ex + ez * ez) > 1.f) {
+			fx = ex; fz = ez;
+		}
+	}
+	if (std::fabs(fx) >= std::fabs(fz)) {
+		return (fx >= 0.f) ? UNIT_FACING_EAST : UNIT_FACING_WEST;
+	}
+	return (fz >= 0.f) ? UNIT_FACING_SOUTH : UNIT_FACING_NORTH;
+}
+
 // Snap a build position onto the base grid, leaving the walkways empty.
 //
 // Returns false whenever the grid should not apply -- no frame published yet, or
@@ -1819,6 +1960,27 @@ std::vector<CCircuitUnit*> CCircuitAI::GetOwnStructsNear(const springai::AIFloat
 			continue;
 		}
 		if (u->GetUnit()->IsBeingBuilt()) {
+			continue;
+		}
+		if ((radius > 0.f) && (u->GetPos(frame).SqDistance2D(pos) > sqRadius)) {
+			continue;
+		}
+		out.push_back(u);
+	}
+	return out;
+}
+
+std::vector<CCircuitUnit*> CCircuitAI::GetOwnDamagedNear(const springai::AIFloat3& pos, float radius)
+{
+	std::vector<CCircuitUnit*> out;
+	const float sqRadius = radius * radius;
+	const int frame = GetLastFrame();
+	for (auto& kv : teamUnits) {
+		CCircuitUnit* u = kv.second;
+		if ((u == nullptr) || (u->GetCircuitDef() == nullptr) || !u->GetCircuitDef()->IsMobile()) {
+			continue;
+		}
+		if (u->GetUnit()->IsBeingBuilt() || (u->GetHealthPercent() >= 1.f)) {
 			continue;
 		}
 		if ((radius > 0.f) && (u->GetPos(frame).SqDistance2D(pos) > sqRadius)) {
@@ -1988,28 +2150,94 @@ float CCircuitAI::GetNetInflAt(const AIFloat3& pos) const
 // Cost-weighted so a dead constructor or a dead tank moves it and a dead scout
 // barely does. Decayed so it tracks the CURRENT attack rather than accumulating
 // every fight of the game into a meaningless average.
+//
+// Kept as a small set of spots rather than one centroid: a loss merges into the
+// nearest spot within apex_hot_radius, else takes a free slot, else overwrites
+// the weakest. Two simultaneous breaches stay two positions, which is what lets
+// separate garrisons answer separate breaches.
 void CCircuitAI::NoteLossAt(const springai::AIFloat3& pos, float costM)
 {
 	if ((costM <= .0f) || !utils::is_valid(pos)) {
 		return;
 	}
-	hotSum += pos * costM;
-	hotWeight += costM;
+	const float radius = GetTunable("apex_hot_radius", 1000.f);
+
+	int best = -1;
+	float bestSqDist = radius * radius;
+	int weakest = -1;
+	float weakestWeight = std::numeric_limits<float>::max();
+	for (unsigned i = 0; i < hotSpots.size(); ++i) {
+		const float sqDist = hotSpots[i].pos.SqDistance2D(pos);
+		if (sqDist <= bestSqDist) {
+			bestSqDist = sqDist;
+			best = int(i);
+		}
+		if (hotSpots[i].weight < weakestWeight) {
+			weakestWeight = hotSpots[i].weight;
+			weakest = int(i);
+		}
+	}
+	if (best >= 0) {
+		SHotSpot& spot = hotSpots[best];
+		const float total = spot.weight + costM;
+		spot.pos = (spot.pos * spot.weight + pos * costM) / total;
+		spot.weight = total;
+		return;
+	}
+	if (hotSpots.size() < HOT_SPOT_NUM) {
+		SHotSpot spot;
+		spot.pos = pos;
+		spot.weight = costM;
+		hotSpots.push_back(spot);
+		return;
+	}
+	if ((weakest >= 0) && (hotSpots[weakest].weight < costM)) {
+		hotSpots[weakest].pos = pos;
+		hotSpots[weakest].weight = costM;
+	}
 }
 
-bool CCircuitAI::GetAttackHotspot(springai::AIFloat3& outPos, float& outWeight)
+void CCircuitAI::DecayHotSpots()
 {
 	const int frame = GetLastFrame();
-	if (frame >= hotDecayFrame + HOT_DECAY_PERIOD) {
-		hotDecayFrame = frame;
-		hotSum *= HOT_DECAY;
-		hotWeight *= HOT_DECAY;
+	if (frame < hotDecayFrame + HOT_DECAY_PERIOD) {
+		return;
 	}
-	if (hotWeight < HOT_MIN_WEIGHT) {
+	hotDecayFrame = frame;
+	// A spot decayed to nothing is a fight that finished; dropping it frees the
+	// slot for the next one rather than holding a stale position for the game.
+	for (int i = int(hotSpots.size()) - 1; i >= 0; --i) {
+		hotSpots[i].weight *= HOT_DECAY;
+		if (hotSpots[i].weight < 1.f) {
+			hotSpots.erase(hotSpots.begin() + i);
+		}
+	}
+}
+
+const std::vector<CCircuitAI::SHotSpot>& CCircuitAI::GetHotSpots()
+{
+	DecayHotSpots();
+	return hotSpots;
+}
+
+// The heaviest single spot. Identical to the old centroid while only one fight
+// is running, which is the case this used to be right for.
+bool CCircuitAI::GetAttackHotspot(springai::AIFloat3& outPos, float& outWeight)
+{
+	DecayHotSpots();
+	int best = -1;
+	float bestWeight = HOT_MIN_WEIGHT;
+	for (unsigned i = 0; i < hotSpots.size(); ++i) {
+		if (hotSpots[i].weight >= bestWeight) {
+			bestWeight = hotSpots[i].weight;
+			best = i;
+		}
+	}
+	if (best < 0) {
 		return false;
 	}
-	outPos = hotSum / hotWeight;
-	outWeight = hotWeight;
+	outPos = hotSpots[best].pos;
+	outWeight = hotSpots[best].weight;
 	return true;
 }
 

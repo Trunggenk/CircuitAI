@@ -621,10 +621,16 @@ const std::set<IBuilderTask*>& CBuilderManager::GetTasks(IBuilderTask::BuildType
 void CBuilderManager::ActivateTask(IBuilderTask* task)
 {
 	if ((task->GetType() == IUnitTask::Type::BUILDER) && (task->GetBuildType() < IBuilderTask::BuildType::_SIZE_)) {
+		// buildTasks membership holds its OWN counted reference: a task listed
+		// here is iterated by MakeTask/MakeCommDangerTask and must never be
+		// freed by a script-side Release while listed. Crashed live twice
+		// (2026-08-15, freed candidate inside the MakeCommDangerTask loop)
+		// before membership was counted. Released in DequeueTask's erase.
 		buildTasks[static_cast<IBuilderTask::BT>(task->GetBuildType())].insert(task);
+		task->AddRef();
 		buildTasksCount++;
 	}
-	updateTasks.push_back(task);
+	PushUpdate(task);
 	task->Activate();
 }
 
@@ -733,8 +739,9 @@ IBuilderTask* CBuilderManager::Enqueue(const TaskB::SBuildTask& ti)
 
 	if (ti.isActive) {
 		buildTasks[static_cast<IBuilderTask::BT>(ti.type)].insert(task);
+		task->AddRef();  // counted membership, see ActivateTask
 		buildTasksCount++;
-		updateTasks.push_back(task);
+		PushUpdate(task);
 	} else {
 		task->Deactivate();
 	}
@@ -762,7 +769,7 @@ IUnitTask* CBuilderManager::Enqueue(const TaskB::SServBTask& ti)
 		} break;
 	}
 
-	updateTasks.push_back(task);
+	PushUpdate(task);
 	TaskAdded(task);
 	return task;
 }
@@ -770,7 +777,7 @@ IUnitTask* CBuilderManager::Enqueue(const TaskB::SServBTask& ti)
 CRetreatTask* CBuilderManager::EnqueueRetreat()
 {
 	CRetreatTask* task = new CRetreatTask(this);
-	updateTasks.push_back(task);
+	PushUpdate(task);
 	TaskAdded(task);
 	return task;
 }
@@ -781,10 +788,11 @@ void CBuilderManager::AssignTask(CCircuitUnit* unit, IUnitTask* task)
 	static_cast<CBuilderScript*>(script)->TaskAssigned(unit);
 }
 
-void CBuilderManager::AssignTask(CCircuitUnit* unit)
+IUnitTask* CBuilderManager::AssignTask(CCircuitUnit* unit)
 {
-	ITaskModule::AssignTask(unit);
+	IUnitTask* task = ITaskModule::AssignTask(unit);
 	static_cast<CBuilderScript*>(script)->TaskAssigned(unit);
+	return task;
 }
 
 void CBuilderManager::DequeueTask(IUnitTask* task, bool done)
@@ -795,26 +803,48 @@ void CBuilderManager::DequeueTask(IUnitTask* task, bool done)
 			if (taskB->GetBuildType() >= IBuilderTask::BuildType::_SIZE_) {
 				break;
 			}
+			// The target-keyed maps are erased UNCONDITIONALLY, before the
+			// buildTasks membership branch: a task dequeued while not listed
+			// there (the break below) used to leave a stale repairUnits entry
+			// pointing at memory the update reaper then freed -- UnitDestroyed
+			// aborted through it 85 minutes into a soak (2026-08-15).
+			switch (taskB->GetBuildType()) {
+				case IBuilderTask::BuildType::REPAIR: {
+					auto itre = repairUnits.find(static_cast<CBRepairTask*>(taskB)->GetTargetId());
+					if ((itre != repairUnits.end()) && (itre->second == taskB)) {
+						repairUnits.erase(itre);
+						taskB->Release();  // the counted map reference (MarkCounted)
+					}
+				} break;
+				case IBuilderTask::BuildType::RECLAIM: {
+					auto itcl = reclaimUnits.find(taskB->GetTarget());
+					if ((itcl != reclaimUnits.end()) && (itcl->second == taskB)) {
+						reclaimUnits.erase(itcl);
+						taskB->Release();  // the counted map reference (MarkCounted)
+					}
+				} break;
+				case IBuilderTask::BuildType::RESURRECT: {
+				} break;
+				default: {
+					auto itun = unfinishedUnits.find(taskB->GetTarget());
+					if ((itun != unfinishedUnits.end()) && (itun->second == taskB)) {
+						unfinishedUnits.erase(itun);
+						taskB->Release();  // the counted map reference (MarkCounted)
+					}
+				} break;
+			}
 			std::set<IBuilderTask*>& tasks = buildTasks[static_cast<IBuilderTask::BT>(taskB->GetBuildType())];
 			auto it = tasks.find(taskB);
 			if (it == tasks.end()) {
 				break;
 			}
-			switch (taskB->GetBuildType()) {
-				case IBuilderTask::BuildType::REPAIR: {
-					repairUnits.erase(static_cast<CBRepairTask*>(taskB)->GetTargetId());
-				} break;
-				case IBuilderTask::BuildType::RECLAIM: {
-					reclaimUnits.erase(taskB->GetTarget());
-				} break;
-				case IBuilderTask::BuildType::RESURRECT: {
-				} break;
-				default: {
-					unfinishedUnits.erase(taskB->GetTarget());
-				} break;
-			}
 			tasks.erase(it);
 			buildTasksCount--;
+			// The counted membership reference (see ActivateTask) is dropped
+			// AFTER the base DequeueTask below has finished using the task.
+			ITaskModule::DequeueTask(task, done);
+			task->Release();
+			return;
 		} break;
 		default: break;
 	}
@@ -858,6 +888,42 @@ bool CBuilderManager::HasFreeAssists(CCircuitUnit* builder) const
 	return (guardCount <= (conTaskCnt == 0 ? assistCount / 2 : 2))
 			&& conDef->IsAbleToAssist() && !builder->IsAttrSolo()
 			&& (!conDef->IsRoleComm() || ((int)assistCount <= circuit->GetSetupManager()->GetAssistFac()));
+}
+
+// The target-keyed maps hold COUNTED references: UnitDestroyed/UnitIdle
+// dereference their values at arbitrary event times, and an entry whose task
+// was freed elsewhere crashed two soaks at the same TaskRemoved stack
+// (2026-08-15). A stale-but-alive task aborts harmlessly; a dangling one is
+// an AV. Eviction of a previous occupant releases it; DequeueTask's erase
+// releases on removal.
+template <class T>
+void CBuilderManager::MarkCounted(T*& slot, T* task)
+{
+	if (slot == task) {
+		return;
+	}
+	if (task != nullptr) {
+		task->AddRef();
+	}
+	if (slot != nullptr) {
+		slot->Release();
+	}
+	slot = task;
+}
+
+void CBuilderManager::MarkUnfinishedUnit(CAllyUnit* target, IBuilderTask* task)
+{
+	MarkCounted(unfinishedUnits[target], task);
+}
+
+void CBuilderManager::MarkRepairUnit(ICoreUnit::Id targetId, CBRepairTask* task)
+{
+	MarkCounted(repairUnits[targetId], task);
+}
+
+void CBuilderManager::MarkReclaimUnit(CAllyUnit* target, CBReclaimTask* task)
+{
+	MarkCounted(reclaimUnits[target], task);
 }
 
 SBuildChain* CBuilderManager::GetBuildChain(IBuilderTask::BuildType buildType, CCircuitDef* cdef) const
@@ -1745,8 +1811,9 @@ void CBuilderManager::Load(std::istream& is)
 			if (task != nullptr) {
 				const bool isValid = is >> *task;
 				buildTasks[i].insert(task);
+				task->AddRef();  // counted membership, see ActivateTask
 				buildTasksCount++;
-				updateTasks.push_back(task);
+				PushUpdate(task);
 				if (!isValid) {
 #ifdef DEBUG_SAVELOAD
 					circuit->LOG("Invalid task");

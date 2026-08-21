@@ -30,7 +30,7 @@ struct SEnemyData {
 
 	enum LosMask: char {NONE   = 0x00,
 						LOS    = 0x01, RADAR = 0x02, HIDDEN = 0x04, NEUTRAL = 0x08,
-						IGNORE = 0x08, DYING = 0x20, DEAD   = 0x40};
+						IGNORE = 0x08, FRESH = 0x10, DYING = 0x20, DEAD   = 0x40};
 	using LM = std::underlying_type<LosMask>::type;
 
 	CCircuitDef* cdef;
@@ -71,6 +71,7 @@ struct SEnemyData {
 	void SetHidden()    { losStatus |= LosMask::HIDDEN; }
 	void SetNeutral()   { losStatus |= LosMask::NEUTRAL; }
 	void SetIgnore()    { losStatus |= LosMask::IGNORE; }
+	void SetFresh()     { losStatus |= LosMask::FRESH; }
 	void SetDying()     { losStatus |= LosMask::DYING | LosMask::HIDDEN; }
 	void SetDead()      { losStatus |= LosMask::DEAD | LosMask::HIDDEN; }
 	void ClearInLOS()   { losStatus &= ~LosMask::LOS; }
@@ -78,6 +79,7 @@ struct SEnemyData {
 	void ClearHidden()  { losStatus &= ~LosMask::HIDDEN; }
 	void ClearNeutral() { losStatus &= ~LosMask::NEUTRAL; };
 	void ClearIgnore()  { losStatus &= ~LosMask::IGNORE; }
+	void ClearFresh()   { losStatus &= ~LosMask::FRESH; }
 
 	bool IsInLOS()          const { return losStatus & LosMask::LOS; }
 	bool IsInRadar()        const { return losStatus & LosMask::RADAR; }
@@ -86,6 +88,7 @@ struct SEnemyData {
 	bool IsHidden()         const { return losStatus & (LosMask::HIDDEN | LosMask::NEUTRAL | LosMask::IGNORE); }
 	bool IsNeutral()        const { return losStatus & LosMask::NEUTRAL; }
 	bool IsIgnore()         const { return losStatus & (LosMask::IGNORE | LosMask::NEUTRAL); }
+	bool IsFresh()          const { return losStatus & LosMask::FRESH; }
 	bool IsDying()          const { return losStatus & LosMask::DYING; }
 	bool IsDead()           const { return losStatus & LosMask::DEAD; }
 };
@@ -110,6 +113,10 @@ public:
 
 	void SetLastSeen(int frame) { lastSeen = frame; }
 	int GetLastSeen() const { return lastSeen; }
+
+	// Separate from lastSeen: CMapManager resets that to -1 on its own schedule.
+	void SetSeenFrame(int frame) { seenFrame = frame; }
+	int GetSeenFrame() const { return seenFrame; }
 
 	void SetCost(float value) { data.cost = value; }
 	float GetCost() const { return data.cost; }
@@ -149,6 +156,7 @@ private:
 
 	int knownFrame;
 	int lastSeen;
+	int seenFrame = -1;
 
 	springai::Weapon* shield;
 
@@ -167,6 +175,8 @@ public:
 	void ClearHidden()  { data.ClearHidden(); }
 	void ClearNeutral() { data.ClearNeutral(); }
 	void ClearIgnore()  { data.ClearIgnore(); }  // on decoy identification
+	void SetFresh()     { data.SetFresh(); }
+	void ClearFresh()   { data.ClearFresh(); }
 
 	bool IsInLOS()          const { return data.IsInLOS(); }
 	bool IsInRadar()        const { return data.IsInRadar(); }
@@ -175,6 +185,7 @@ public:
 	bool IsHidden()         const { return data.IsHidden(); }
 	bool IsNeutral()        const { return data.IsNeutral(); }
 	bool IsIgnore()         const { return data.IsIgnore(); }
+	bool IsFresh()          const { return data.IsFresh(); }
 	bool IsDying()          const { return data.IsDying(); }
 	bool IsDead()           const { return data.IsDead(); }
 
@@ -190,6 +201,12 @@ public:
 	CEnemyInfo& operator=(const CEnemyInfo&) = delete;
 	CEnemyInfo(CEnemyUnit* data);
 	virtual ~CEnemyInfo();
+
+	// CRASH DIAGNOSTIC (temporary): same guard-page treatment as ICoreUnit --
+	// fighter tasks cache CEnemyInfo* and it is raw-deleted on enemy death.
+	// Defined in EnemyUnit.cpp.
+	static void* operator new(std::size_t sz);
+	static void operator delete(void* p);
 
 	void BindTask(IFighterTask* task) { tasks.insert(task); }
 	void UnbindTask(IFighterTask* task) { tasks.erase(task); }

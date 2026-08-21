@@ -69,7 +69,7 @@ IBuilderTask::IBuilderTask(ITaskModule* mgr, Priority priority,
 		, nextTask(nullptr)
 		, initiator(nullptr)
 		, buildFails(0)
-		, unitIt(units.end())
+		, nextCursor(nullptr)
 {
 	CEconomyManager* economyMgr = manager->GetCircuit()->GetEconomyManager();
 	savedIncome.metal = economyMgr->GetAvgMetalIncome();
@@ -91,7 +91,7 @@ IBuilderTask::IBuilderTask(ITaskModule* mgr, Type type, BuildType buildType)
 		, initiator(nullptr)
 		, savedIncome({0.f, 0.f})
 		, buildFails(0)
-		, unitIt(units.end())
+		, nextCursor(nullptr)
 {
 }
 
@@ -163,9 +163,6 @@ void IBuilderTask::AssignTo(CCircuitUnit* unit)
 
 void IBuilderTask::RemoveAssignee(CCircuitUnit* unit)
 {
-	if ((units.find(unit) == unitIt) && (unitIt != units.end())) {
-		++unitIt;
-	}
 	if (initiator == unit) {
 		initiator = nullptr;
 	}
@@ -448,18 +445,25 @@ CCircuitUnit* IBuilderTask::GetNextAssignee()
 	if (units.empty()) {
 		return nullptr;
 	}
-	if (unitIt == units.end()) {
-		unitIt = units.begin();
+	auto it = (nextCursor == nullptr) ? units.begin() : units.upper_bound(nextCursor);
+	if (it == units.end()) {
+		it = units.begin();
 	}
-	CCircuitUnit* unit = *unitIt;
-	++unitIt;
-	return unit;
+	nextCursor = *it;
+	return nextCursor;
 }
 
 void IBuilderTask::Update(CCircuitUnit* unit)
 {
-	if (Reevaluate(unit) && !unit->GetTravelAct()->IsFinished()) {
-		UpdatePath(unit);  // Execute(unit) within OnTravelEnd
+	if (Reevaluate(unit)) {
+		// Reevaluate runs the script pipeline, which can REASSIGN the unit to
+		// a different task -- RemoveAssignee clears its actions, so the travel
+		// act read here can be null. Crashed a watched game at 3 minutes the
+		// moment the assist-fallback made mid-reevaluation reassignment common.
+		ITravelAction* travel = unit->GetTravelAct();
+		if ((travel != nullptr) && !travel->IsFinished()) {
+			UpdatePath(unit);  // Execute(unit) within OnTravelEnd
+		}
 	}
 }
 
@@ -563,7 +567,9 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 		|| ((circuit->GetSetupManager()->GetBasePos().SqDistance2D(startPos) < SQUARE(circuit->GetMilitaryManager()->GetBaseDefRange()))
 			&& (circuit->GetSetupManager()->GetBasePos().SqDistance2D(endPos) < SQUARE(circuit->GetMilitaryManager()->GetBaseDefRange()))))
 	{
-		unit->GetTravelAct()->StateFinish();
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->StateFinish();
+		}
 		return;
 	}
 
@@ -586,11 +592,21 @@ void IBuilderTask::ApplyPath(const CQueryPathSingle* query)
 {
 	const std::shared_ptr<CPathInfo>& pPath = query->GetPathInfo();
 	CCircuitUnit* unit = query->GetUnit();
+	// The query completed AFTER the unit's actions were cleared (task switch
+	// or death): GetTravelAct() is null and SetPath through it crashed three
+	// identical tournament games (2026-08-15). The path is simply unwanted.
+	if ((unit == nullptr) || (unit->GetTravelAct() == nullptr)) {
+		return;
+	}
 
 	if (pPath->path.size() > 2) {
-		unit->GetTravelAct()->SetPath(pPath);
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->SetPath(pPath);
+		}
 	} else {
-		unit->GetTravelAct()->StateFinish();
+		if (unit->GetTravelAct() != nullptr) {  // null after ClearAct: path unwanted
+			unit->GetTravelAct()->StateFinish();
+		}
 	}
 }
 
@@ -697,6 +713,15 @@ void IBuilderTask::FindBuildSite(CCircuitUnit* builder, const AIFloat3& pos, flo
 
 void IBuilderTask::FindFacing(const springai::AIFloat3& pos)
 {
+	// apex: inside the published base frame, face the axis (the road to the
+	// front) rather than the map centre, so a factory's exit apron opens onto
+	// ground the grid keeps clear. FactoryTask still rotates through all four
+	// facings if this one cannot place.
+	const int gridFacing = manager->GetCircuit()->GetBaseGridFacing(pos);
+	if (gridFacing != UNIT_NO_FACING) {
+		facing = gridFacing;
+		return;
+	}
 	CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
 
 //	facing = UNIT_NO_FACING;

@@ -48,6 +48,8 @@ CEnemyManager::CEnemyManager(CCircuitAI* circuit)
 		, isAreaUpdated(true)
 {
 	enemyInfos.fill({0.f, 0.f});
+	freshInfos.fill({0.f, 0.f});
+	freshFrames = FRAMES_PER_SEC * 60;
 
 	enemyPos = circuit->GetTerrainManager()->GetTerrainCenter();
 	enemyGroups.push_back(SEnemyGroup(enemyPos));
@@ -144,6 +146,24 @@ void CEnemyManager::UpdateEnemyDatas(CQuadField& quadField)
 			DyingEnemy(enemy);
 			++enemyIterator;
 			continue;
+		}
+
+		// Freshness: what we can see now, plus what we saw within freshFrames.
+		// GetEnemyCost() itself never forgets a unit once registered.
+		if (enemy->GetCircuitDef() != nullptr) {
+			const int lastFrame = circuit->GetLastFrame();
+			if (enemy->IsInRadarOrLOS()) {
+				enemy->SetSeenFrame(lastFrame);
+				if (!enemy->IsFresh()) {
+					enemy->SetFresh();
+					ModFresh(enemy, +1);
+				}
+			} else if (enemy->IsFresh()
+					&& (enemy->IsHidden() || (lastFrame - enemy->GetSeenFrame() > freshFrames)))
+			{
+				ModFresh(enemy, -1);
+				enemy->ClearFresh();
+			}
 		}
 
 		if (enemy->IsInRadarOrLOS()) {
@@ -359,6 +379,102 @@ void CEnemyManager::DyingEnemy(CEnemyUnit* enemy, int frame)
 	DyingEnemy(enemy);
 }
 
+// apex: GHOSTS ONLY GROW. A unit killed out of LOS never sends
+// EnemyDestroyed, so its entry lives forever -- by minute 60 of an 8v8 the
+// registry holds every enemy that ever existed, and every consumer that
+// walks it (PrepareUpdate, per-def scans, the stock BombTask) pays a cost
+// proportional to game AGE, not to the live world; measured as the AI-C++
+// 6->9 s/min late-game creep. A ghost hidden and unseen for maxAgeFrames
+// dies through the SAME DyingEnemy pipeline a real death uses, so every
+// counter and per-circuit view stays consistent. Re-sighting a purged spot
+// re-registers the unit fresh -- behaviour preserved, memory bounded. The
+// deliberate cost: GetEnemyCost pessimism decays past the purge age, which
+// is also what stopped the repeat-nuking of long-dead ground.
+// Two tiers (apexearth: "a ten minute timeout is not good enough... if you
+// are viewing an area that had information... and you now have a different
+// set of things there, you replace the past registry information"):
+// HIDDEN is exactly that reconciliation -- CMapManager::HostileInLOS sets it
+// the moment our vision covers an entry's last-known ground and the unit is
+// not there -- so a hidden entry is VISION-CONFIRMED stale and earns only a
+// short fuse (it may have slipped into adjacent fog; the sizing pessimism
+// keeps it that long and no longer). An entry whose ground we NEVER
+// re-viewed is a genuine unknown -- the pessimism the massing sizing relies
+// on -- and keeps the long fuse.
+// apex: enemy AIR value near a point, on the same guarded walk the purge uses
+// -- the circuit-level enemyInfos map holds wrappers whose data dies before the
+// deferred per-circuit erase, and iterating THAT from script crashed at every
+// commander blast (2026-08-18, seeds 120/121/123).
+float CEnemyManager::GetEnemyAirCostNear(const springai::AIFloat3& pos, float radius) const
+{
+	float sum = 0.f;
+	const float sq = radius * radius;
+	for (CEnemyUnit* e : enemyUpdates) {
+		if ((e == nullptr) || e->IsDying()) {
+			continue;
+		}
+		CCircuitDef* cdef = e->GetCircuitDef();
+		if ((cdef == nullptr) || !cdef->IsAbleToFly()) {
+			continue;
+		}
+		if (pos.SqDistance2D(e->GetPos()) > sq) {
+			continue;
+		}
+		sum += e->GetCost();
+	}
+	return sum;
+}
+
+// apex: the longest weapon range among a group's known members. The danger a
+// standing group poses depends on what it can SHELL, not where it walks --
+// artillery reaches ~1500 and must read dangerous from that far out.
+float CEnemyManager::GetEnemyGroupRange(int idx) const
+{
+	if ((idx < 0) || (idx >= (int)enemyGroups.size())) {
+		return 0.f;
+	}
+	float range = 0.f;
+	for (const ICoreUnit::Id eId : enemyGroups[idx].units) {
+		CEnemyUnit* enemy = GetEnemyUnit(eId);
+		if (enemy == nullptr) {
+			continue;
+		}
+		CCircuitDef* cdef = enemy->GetCircuitDef();
+		if (cdef != nullptr) {
+			range = std::max(range, cdef->GetMaxRange());
+		}
+	}
+	return range;
+}
+
+void CEnemyManager::PurgeStaleGhosts(int frame, int confirmedAgeFrames, int unknownAgeFrames)
+{
+	for (CEnemyUnit* e : enemyUpdates) {
+		if ((e == nullptr) || e->IsDying()) {
+			continue;
+		}
+		const int seen = e->GetSeenFrame();
+		if (seen < 0) {
+			continue;
+		}
+		const int age = frame - seen;
+		if (e->IsHidden()) {
+			// A STATIC cannot slip into fog: hidden means we saw its tile and
+			// the building was gone -- it is dead, delete now (apexearth:
+			// "why not have the ghosts die immediately?"). MOBILES keep the
+			// short fuse: hidden often just means it walked behind a hill,
+			// and its cost is the sizing pessimism -- plus battle vision
+			// flickers, and instant deletion would thrash delete/re-register.
+			CCircuitDef* ecdef = e->GetCircuitDef();
+			const bool isStatic = (ecdef != nullptr) && !ecdef->IsMobile();
+			if (isStatic || (age > confirmedAgeFrames)) {
+				DyingEnemy(e, frame);
+			}
+		} else if (e->NotInRadarAndLOS() && (age > unknownAgeFrames)) {
+			DyingEnemy(e, frame);
+		}
+	}
+}
+
 void CEnemyManager::DyingEnemy(CEnemyUnit* enemy)
 {
 	enemyDying.insert(enemy);
@@ -373,28 +489,69 @@ void CEnemyManager::DeleteEnemyUnit(CEnemyUnit* data)
 	delete data;
 }
 
+void CEnemyManager::ModCost(const CEnemyUnit* e, int sign, SEnemyInfo* infos,
+		float& mobCost, float& mobThr)
+{
+	CCircuitDef* cdef = e->GetCircuitDef();
+	assert(cdef != nullptr);
+
+	const float cost = e->GetCost();
+	const float threat = cdef->GetDefThreat();
+
+	const CCircuitDef::RoleT roleSize = CCircuitDef::GetRoleNames().size();
+	for (CCircuitDef::RoleT type = 0; type < roleSize; ++type) {
+		if (cdef->IsEnemyRoleAny(CCircuitDef::GetMask(type))) {
+			SEnemyInfo& info = infos[type];
+			if (sign > 0) {
+				info.cost   += cost;
+				info.threat += threat;
+			} else {
+				info.cost   = std::max(info.cost   - cost,   0.f);
+				info.threat = std::max(info.threat - threat, 0.f);
+			}
+		}
+	}
+	if (cdef->IsMobile()) {
+		if (sign > 0) {
+			mobThr  += threat * initThrMod.inMobile;
+			mobCost += cost;
+		} else {
+			mobThr  = std::max(mobThr  - threat * initThrMod.inMobile, 0.f);
+			mobCost = std::max(mobCost - cost, 0.f);
+		}
+	}
+}
+
+// staticThreat has no fresh counterpart -- a turret we saw once is still there.
+void CEnemyManager::ModStatic(const CEnemyUnit* e, int sign)
+{
+	CCircuitDef* cdef = e->GetCircuitDef();
+	assert(cdef != nullptr);
+	if (cdef->IsMobile()) {
+		return;
+	}
+	const float d = cdef->GetDefThreat() * initThrMod.inStatic;
+	staticThreat = (sign > 0) ? (staticThreat + d) : std::max(staticThreat - d, 0.f);
+}
+
+void CEnemyManager::ModFresh(const CEnemyUnit* e, int sign)
+{
+	if (e->IsIgnore()) {
+		return;
+	}
+	ModCost(e, sign, freshInfos.data(), freshMobileCost, freshMobileThreat);
+}
+
 void CEnemyManager::AddEnemyCost(const CEnemyUnit* e)
 {
 	if (e->IsIgnore()) {
 		return;
 	}
 
-	CCircuitDef* cdef = e->GetCircuitDef();
-	assert(cdef != nullptr);
-
-	const CCircuitDef::RoleT roleSize = CCircuitDef::GetRoleNames().size();
-	for (CCircuitDef::RoleT type = 0; type < roleSize; ++type) {
-		if (cdef->IsEnemyRoleAny(CCircuitDef::GetMask(type))) {
-			SEnemyInfo& info = enemyInfos[type];
-			info.cost   += e->GetCost();
-			info.threat += cdef->GetDefThreat();
-		}
-	}
-	if (cdef->IsMobile()) {
-		mobileThreat += cdef->GetDefThreat() * initThrMod.inMobile;
-		enemyMobileCost += e->GetCost();
-	} else {
-		staticThreat += cdef->GetDefThreat() * initThrMod.inStatic;
+	ModCost(e, +1, enemyInfos.data(), enemyMobileCost, mobileThreat);
+	ModStatic(e, +1);
+	if (e->IsFresh()) {
+		ModCost(e, +1, freshInfos.data(), freshMobileCost, freshMobileThreat);
 	}
 }
 
@@ -404,23 +561,16 @@ void CEnemyManager::DelEnemyCost(const CEnemyUnit* e)
 		return;
 	}
 
-	CCircuitDef* cdef = e->GetCircuitDef();
-	assert(cdef != nullptr);
+	ModCost(e, -1, enemyInfos.data(), enemyMobileCost, mobileThreat);
+	ModStatic(e, -1);
+	if (e->IsFresh()) {
+		ModCost(e, -1, freshInfos.data(), freshMobileCost, freshMobileThreat);
+	}
+}
 
-	const CCircuitDef::RoleT roleSize = CCircuitDef::GetRoleNames().size();
-	for (CCircuitDef::RoleT type = 0; type < roleSize; ++type) {
-		if (cdef->IsEnemyRoleAny(CCircuitDef::GetMask(type))) {
-			SEnemyInfo& info = enemyInfos[type];
-			info.cost   = std::max(info.cost   - e->GetCost(),      0.f);
-			info.threat = std::max(info.threat - cdef->GetDefThreat(), 0.f);
-		}
-	}
-	if (cdef->IsMobile()) {
-		mobileThreat = std::max(mobileThreat - cdef->GetDefThreat() * initThrMod.inMobile, 0.f);
-		enemyMobileCost = std::max(enemyMobileCost - e->GetCost(), 0.f);
-	} else {
-		staticThreat = std::max(staticThreat - cdef->GetDefThreat() * initThrMod.inStatic, 0.f);
-	}
+void CEnemyManager::SetFreshSeconds(float seconds)
+{
+	freshFrames = std::max(int(seconds * FRAMES_PER_SEC), int(FRAMES_PER_SEC));
 }
 
 void CEnemyManager::UpdateAreaUsers(CCircuitAI* ai)

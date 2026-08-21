@@ -10,6 +10,8 @@
 
 #include "script/ModuleScript.h"
 
+#include <cstdint>
+
 class asIScriptModule;
 class asIScriptFunction;
 
@@ -38,6 +40,13 @@ protected:
 		asIScriptFunction* taskAdded = nullptr;
 		asIScriptFunction* taskRemoved = nullptr;
 	} umInfo;
+
+	// apex: script-time accounting for AiMakeTask -- the host runs every AI's
+	// script, and "it makes me lag" needs a number before an optimization.
+	uint64_t perfUs = 0;
+	uint64_t perfMaxUs = 0;
+	unsigned perfCalls = 0;
+	int perfNextLog = 0;
 };
 
 } // namespace circuit

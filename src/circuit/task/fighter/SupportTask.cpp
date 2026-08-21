@@ -22,6 +22,32 @@ namespace circuit {
 
 using namespace springai;
 
+// apex: how many escorts of ONE kind may attach to one squad.
+// apexearth: "Attach a maximum of 2 jammer and 2 radar to the squads." His
+// number, stated as a number. It caps the escort of a SQUAD, not the army: the
+// total is this times the number of squads, and the squad count grows with the
+// army that is fielded. Brain::ESCORT_PER_SQUAD in manager/brain/facqueue.as
+// buys against the same figure -- move one and the other must move too, or
+// production and attachment disagree about what a squad is owed.
+#define ESCORT_PER_SQUAD	2
+
+// 0 = not a sensor escort, 1 = radar, 2 = jammer. Read off the def's own radii:
+// CMilitaryManager sets IsRadar()/IsJammer() only inside the immobile branch of
+// its def loop, so both are false for every MOBILE radar and jammer.
+static int EscortKind(const CCircuitDef* cdef)
+{
+	if (cdef->IsAttacker()) {
+		return 0;
+	}
+	if (cdef->GetJammerRadius() > 1.f) {
+		return 2;
+	}
+	if (cdef->GetRadarRadius() > 1.f) {
+		return 1;
+	}
+	return 0;
+}
+
 CSupportTask::CSupportTask(ITaskModule* mgr)
 		: IFighterTask(mgr, FightType::SUPPORT, 1.f)
 {
@@ -152,14 +178,36 @@ void CSupportTask::ApplyPath(const CQueryPathMulti* query)
 	const AIFloat3& startPos = unit->GetPos(frame);
 	const AIFloat3& endPos = pPath->posPath.back();
 	if (startPos.SqDistance2D(endPos) < SQUARE(1000.f)) {
-		IFighterTask* task = *tasks.begin();
+		// A squad already holding its two of this kind is skipped, so the next
+		// escort built walks to a squad that has none instead of stacking four
+		// on whichever squad happens to be nearest. This is the ONLY gate on the
+		// path: ITaskModule::AssignTask does not consult CanAssignTo.
+		// Two squads MERGING can still carry more, and that is left alone -- the
+		// merged squad is twice the size.
+		const int kind = EscortKind(unit->GetCircuitDef());
+		IFighterTask* task = nullptr;
 		float minSqDist = std::numeric_limits<float>::max();
 		for (IFighterTask* candy : tasks) {
-			float sqDist = endPos.SqDistance2D(static_cast<ISquadTask*>(candy)->GetLeaderPos(frame));
+			if (kind != 0) {
+				int held = 0;
+				for (CCircuitUnit* u : candy->GetAssignees()) {
+					if (EscortKind(u->GetCircuitDef()) == kind) {
+						++held;
+					}
+				}
+				if (held >= ESCORT_PER_SQUAD) {
+					continue;
+				}
+			}
+			const float sqDist = endPos.SqDistance2D(static_cast<ISquadTask*>(candy)->GetLeaderPos(frame));
 			if (minSqDist > sqDist) {
 				minSqDist = sqDist;
 				task = candy;
 			}
+		}
+		if (task == nullptr) {
+			Start(unit);  // every squad is full: wait rather than pile on
+			return;
 		}
 		manager->AssignTask(unit, task);
 //		manager->DoneTask(this);  // NOTE: RemoveAssignee will abort task

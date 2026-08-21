@@ -10,11 +10,14 @@
 #include "script/ScriptManager.h"
 #include "script/RefCounter.h"
 #include "map/ThreatMap.h"
+#include "map/MapManager.h"
 #include "scheduler/Scheduler.h"
 #include "setup/SetupManager.h"
 #include "terrain/TerrainManager.h"
 #include "task/builder/BuilderTask.h"
+#include "task/fighter/FighterTask.h"
 #include "unit/CircuitUnit.h"
+#include "unit/action/DGunAction.h"
 #include "CircuitAI.h"
 #include "util/GameAttribute.h"
 #include "util/MaskHandler.h"
@@ -36,6 +39,9 @@
 #include "Lua.h"
 #include "AISCommands.h"  // UNIT_COMMAND_OPTION_*, used by CmdBuildUnit below
 #include "Command.h"       // springai::Command, for reading a unit's own queue
+
+#include <chrono>          // apex: script-time accounting in Update()
+#include <algorithm>
 #include "Sim/Units/CommandAI/Command.h"  // CMD_INSERT
 
 namespace circuit {
@@ -43,7 +49,6 @@ namespace circuit {
 using namespace springai;
 
 asITypeInfo* gUnitArrayType;  // cache
-asITypeInfo* gIdArrayType;  // cache
 
 CInitScript::SInitInfo::SInitInfo(const SInitInfo& o)
 {
@@ -172,6 +177,33 @@ static std::string CCircuitAI_GetMapName(CCircuitAI* circuit)
 	return circuit->GetMap()->GetName();
 }
 
+// The engine's Pos2BuildPos snap (GameHelper.cpp): every building lands on the
+// 16-elmo build grid, with a half-square offset when the footprint size has
+// bit 2 set, so EDGES always meet the grid. Script placement math computes
+// intent in raw elmos; snapping the intent with the same rule keeps rows and
+// walkway gaps exact for every footprint instead of drifting +-8 per def.
+// apexearth: "can we try to ensure that we place it on a floored 2 mod grid
+// of the map? ... this is for any buildings."
+static springai::AIFloat3 CCircuitAI_SnapBuildPos(CCircuitAI* circuit, CCircuitDef* cdef, const springai::AIFloat3& pos)
+{
+	if (cdef == nullptr) {
+		return pos;
+	}
+	constexpr float BUILD_SQ = SQUARE_SIZE * 2;
+	springai::AIFloat3 out = pos;
+	if (cdef->GetDef()->GetXSize() & 2) {
+		out.x = std::floor(pos.x / BUILD_SQ) * BUILD_SQ + SQUARE_SIZE;
+	} else {
+		out.x = std::floor((pos.x + SQUARE_SIZE) / BUILD_SQ) * BUILD_SQ;
+	}
+	if (cdef->GetDef()->GetZSize() & 2) {
+		out.z = std::floor(pos.z / BUILD_SQ) * BUILD_SQ + SQUARE_SIZE;
+	} else {
+		out.z = std::floor((pos.z + SQUARE_SIZE) / BUILD_SQ) * BUILD_SQ;
+	}
+	return out;
+}
+
 // THE UNIT LIMIT, AND WHAT WE HAVE SPENT OF IT.
 //
 // apexearth, on how a quota should be sized: "Take a look at your unit limit and
@@ -179,15 +211,37 @@ static std::string CCircuitAI_GetMapName(CCircuitAI* circuit)
 // buildings, 2000 unit limit, you're in T1... then your split is on 1900
 // available units."
 //
-// Unit_getLimit is the OTHER callback and must not be used: it indexes
-// AI_TEAM_IDS, the array declared `= {{-1}}` and never assigned, which is why
-// every Game_getTeamResource* call in this engine returns -1. Unit::GetMax()
-// reads unitHandler.MaxUnits() with no team lookup at all.
+// THE PER-TEAM LIMIT IS Unit_getLimit, AND IT WORKS. The comment that used to
+// sit here said it "must not be used" because it indexes AI_TEAM_IDS, "the array
+// declared `= {{-1}}` and never assigned". That is false in this engine:
+// SSkirmishAICallbackImpl.cpp:5535 assigns
+// `AI_TEAM_IDS[ai->GetSkirmishAIID()] = ai->GetTeamId()` for every AI, and
+// skirmishAiCallback_Unit_getLimit:3305 is then
+// `teamHandler.Team(AI_TEAM_IDS[id])->GetMaxUnits()` -- the real per-team number.
+//
+// Unit_getMax is the one that is wrong for this job: it returns
+// unitHandler.MaxUnits(), the WHOLE MAP's cap, which is
+// min(maxUnitsPerTeam * activeTeams, MAX_UNITS). Sizing a quota on it targeted
+// twenty thousand raiders per bot lab.
+//
+// The value comes from `GAME\ModOptions\MaxUnits`. BAR's modoptions.lua declares
+// it "Max Units Per Player" with def 2000, min 500, max 32000 -- so it is a real
+// per-player budget that a host can change, which is what the quota divides up.
+static int CCircuitAI_GetUnitLimit(CCircuitAI* circuit)
+{
+	// Both callbacks ignore the unit they are asked through, so any unit of ours
+	// answers; borrowing one avoids constructing a wrapper for an id that may not
+	// exist yet.
+	for (const auto& kv : circuit->GetTeamUnits()) {
+		if ((kv.second != nullptr) && (kv.second->GetUnit() != nullptr)) {
+			return kv.second->GetUnit()->GetLimit();
+		}
+	}
+	return 0;
+}
+
 static int CCircuitAI_GetUnitMax(CCircuitAI* circuit)
 {
-	// GetMax() is a STATIC callback -- skirmishAiCallback_Unit_getMax ignores the
-	// unit it is asked through -- so any unit of ours answers it, and borrowing
-	// one avoids constructing a wrapper for a unit id that may not exist.
 	for (const auto& kv : circuit->GetTeamUnits()) {
 		if ((kv.second != nullptr) && (kv.second->GetUnit() != nullptr)) {
 			return kv.second->GetUnit()->GetMax();
@@ -247,8 +301,15 @@ static int CCircuitAI_GetLeadTeamId(CCircuitAI* circuit)
 
 static CScriptArray* CCircuitAI_GetTeamIds(CCircuitAI* circuit)
 {
+	// The type info MUST come from the calling instance's own engine: a
+	// DLL-global cache held whichever engine registered LAST, so every other
+	// instance built arrays with a foreign engine's type -- cross-engine heap
+	// corruption that crashed at commander-blast allocation storms once a
+	// caller ran hot (2026-08-18, seeds 121/123/127/130/131/132).
+	asITypeInfo* idArrayType =
+			asGetActiveContext()->GetEngine()->GetTypeInfoByDecl("array<Id>");
 	CAllyTeam* allyTeam = circuit->GetAllyTeam();
-	CScriptArray* arr = CScriptArray::Create(gIdArrayType, allyTeam->GetSize());
+	CScriptArray* arr = CScriptArray::Create(idArrayType, allyTeam->GetSize());
 	asUINT i = 0;
 	for (CAllyTeam::Id teamId : allyTeam->GetTeamIds()) {
 		*(CAllyTeam::Id*)arr->At(i++) = teamId;
@@ -271,6 +332,173 @@ static void CCircuitUnit_CmdMoveTo(CCircuitUnit* unit, const AIFloat3& pos)
 	unit->CmdMoveTo(pos);
 }
 
+// apex: the Brain's nuke director. Attack-ground is a netted order (safe);
+// stockpile is an engine read on the host's own unit (safe).
+static void CCircuitUnit_CmdAttackGround(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	unit->CmdAttackGround(pos, UNIT_COMMAND_OPTION_RIGHT_MOUSE_KEY);
+}
+
+static void CCircuitUnit_CmdStop(CCircuitUnit* unit)
+{
+	try {
+		unit->CmdStop();
+	} catch (const std::exception& e) {
+	}
+}
+
+// apex: standing patrol for construction turrets -- the engine's builder AI
+// then assists/repairs/reclaims in range with no per-frame script election.
+static void CCircuitUnit_CmdPatrolTo(CCircuitUnit* unit, const AIFloat3& pos)
+{
+	try {
+		unit->CmdPatrolTo(pos);
+	} catch (const std::exception& e) {
+	}
+}
+
+// apex: enemy AIR value near a point, for the team interceptor pool -- each
+// player publishes this at home and fighters fly to the worst-hit ally.
+// Registry walk, called ~once per second per player.
+static float CCircuitAI_GetEnemyAirCostNear(CCircuitAI* circuit, const springai::AIFloat3& pos, float radius)
+{
+	return circuit->GetEnemyManager()->GetEnemyAirCostNear(pos, radius);
+}
+
+static int CCircuitUnit_GetStockpile(CCircuitUnit* unit)
+{
+	// Same inline guard as CCircuitUnit_CmdPriorityBuild above: TRY_UNIT wants
+	// a CCircuitAI and this wrapper has no clean path to one.
+	try {
+		return unit->GetUnit()->GetStockpile();
+	} catch (const std::exception& e) {
+	}
+	return 0;
+}
+
+// apex: what we witnessed makes knowledge. Marks every REMEMBERED (currently
+// unsensed) enemy within radius as hidden -- the same flag the LOS purge
+// (CMapManager::HostileInLOS) sets when scouted ground shows nothing there.
+// Used by the nuke director at a confirmed impact; a unit actually in radar
+// or LOS is untouched. Host-local bookkeeping only.
+static int CCircuitAI_ForgetEnemiesNear(CCircuitAI* circuit, const AIFloat3& pos, float radius)
+{
+	int n = 0;
+	const float sqR = radius * radius;
+	CMapManager* mapMgr = circuit->GetMapManager();
+	for (const auto& units : {mapMgr->GetHostileUnits(), mapMgr->GetPeaceUnits()}) {
+		for (const auto& kv : units) {
+			CEnemyUnit* e = kv.second;
+			if ((e == nullptr) || e->IsHidden() || !e->NotInRadarAndLOS()) {
+				continue;
+			}
+			if (e->GetPos().SqDistance2D(pos) < sqR) {
+				e->SetHidden();
+				++n;
+			}
+		}
+	}
+	return n;
+}
+
+// apex: can a unit of this def WALK from `from` to `to`? The island question
+// ("do not build land army when alone on an island") is exactly this asked
+// about the T1 tank def from home to the enemy. Uses the terrain analysis's
+// own connected-area model: the area under `from` for this def's move type,
+// then CanMoveToPos to `to`. Immobile or flying defs answer true (they are
+// not walled by water).
+static bool CCircuitAI_CanDefReach(CCircuitAI* circuit, CCircuitDef* cdef,
+		const AIFloat3& from, const AIFloat3& to)
+{
+	if (cdef == nullptr) {
+		return false;
+	}
+	const int mtId = cdef->GetMobileId();
+	if (mtId < 0) {
+		return true;
+	}
+	CTerrainManager* terrainMgr = circuit->GetTerrainManager();
+	terrain::SAreaData* areaData = terrainMgr->GetAreaData();
+	if ((areaData == nullptr) || (mtId >= (int)areaData->mobileType.size())) {
+		return false;
+	}
+	const int si = terrainMgr->GetSectorIndex(from);
+	terrain::SMobileType& mt = areaData->mobileType[mtId];
+	if ((si < 0) || (si >= (int)mt.sector.size())) {
+		return false;
+	}
+	terrain::SArea* area = mt.sector[si].area;
+	if (area == nullptr) {
+		return false;
+	}
+	return terrainMgr->CanMoveToPos(area, to);
+}
+
+// apex: how many of a given enemy def stand within radius of pos -- the
+// "count the antinukes covering this spot" primitive, generic on purpose.
+static int CCircuitAI_CountEnemyDefNear(CCircuitAI* circuit, int defId,
+		const AIFloat3& pos, float radius)
+{
+	int n = 0;
+	const float sqR = radius * radius;
+	for (const auto& kv : circuit->GetEnemyInfos()) {
+		CEnemyInfo* e = kv.second;
+		if ((e == nullptr) || e->IsHidden()) {
+			continue;
+		}
+		CCircuitDef* edef = e->GetCircuitDef();
+		if ((edef != nullptr) && (edef->GetId() == defId)
+			&& (e->GetPos().SqDistance2D(pos) < sqR))
+		{
+			++n;
+		}
+	}
+	return n;
+}
+
+// apex: the enemy cluster model, read-only. Index bounds-checked because the
+// group vector changes between updates.
+static int CEnemyManager_GetEnemyGroupCount(CEnemyManager* mgr)
+{
+	return (int)mgr->GetEnemyGroups().size();
+}
+
+static AIFloat3 CEnemyManager_GetEnemyGroupPos(CEnemyManager* mgr, int i)
+{
+	const auto& groups = mgr->GetEnemyGroups();
+	return ((i >= 0) && (i < (int)groups.size())) ? groups[i].pos : AIFloat3(-RgtVector);
+}
+
+static float CEnemyManager_GetEnemyGroupCost(CEnemyManager* mgr, int i)
+{
+	const auto& groups = mgr->GetEnemyGroups();
+	return ((i >= 0) && (i < (int)groups.size())) ? groups[i].cost : 0.f;
+}
+
+static float CEnemyManager_GetEnemyGroupRange(CEnemyManager* mgr, int i)
+{
+	return mgr->GetEnemyGroupRange(i);
+}
+
+// apex: for a script-driven D-gun raid (commander cloaks in and D-guns a
+// target when energy allows -- apexearth's request). CmdCloak already exists
+// on CCircuitUnit (used natively by RetreatTask's own cloak-on-retreat
+// logic) but was never exposed to script. PushDGun wraps PushDGunAct +
+// CDGunAction -- once pushed, CDGunAction's own Update() handles target
+// selection, line-of-sight, and firing every few ticks entirely on its own
+// (DGunAction.cpp), including its own energy-affordability check
+// (IsDGunReady). Script only needs to get the unit close enough and push
+// this once; it does not need to pick or track a target itself.
+static void CCircuitUnit_CmdCloak(CCircuitUnit* unit, bool state)
+{
+	unit->CmdCloak(state);
+}
+
+static void CCircuitUnit_PushDGun(CCircuitUnit* unit, float range)
+{
+	unit->PushDGunAct(new CDGunAction(unit, range));
+}
+
 static void CCircuitUnit_CmdRepeat(CCircuitUnit* unit, bool repeat)
 {
 	unit->CmdRepeat(repeat);
@@ -283,10 +511,34 @@ static void CCircuitUnit_CmdRepeat(CCircuitUnit* unit, bool repeat)
 // either -- so a quota that must not re-order what is already ordered had no
 // way to tell, and each way of inferring it failed differently.
 //
-// BAR's own Quota Mode widget is built on exactly this call
-// (`Spring.GetFactoryCommands`), which is why it can insert one unit at a time
-// and never accumulate. A build order carries the NEGATIVE unitDefId as its
-// command id, which is how a queued build is told from a move or a wait.
+// A build order carries the NEGATIVE unitDefId as its command id, which is how a
+// queued build is told from a move or a wait.
+//
+// THIS IS NOT THE WIDGET'S READ, AND THE DIFFERENCE IS THE WHOLE PROBLEM. BAR's
+// Quota Mode widget runs inside the game: its Spring.GiveOrderToUnit lands
+// before its next Spring.GetFactoryCommands. An AI order does not --
+// CAICallback::GiveOrder only does clientNet->Send(SendAICommand(...)), so the
+// order is applied when that message is consumed, and at benchmark sim speed
+// that is ~45 sim-seconds later. This call answers what the engine has APPLIED,
+// never what we have SENT. Anything throttling on it must keep its own count of
+// what is outstanding. See docs/19-factory-through-brain.md.
+// THE WHOLE COMMAND QUEUE, not just the build orders. CountQueued below filters
+// to negative cmdIds, which is right for a factory and blind for a builder: a
+// constructor walking to a site holds a MOVE, and a positive id is invisible to
+// it. "The commander is standing around" is a claim about THIS number being
+// zero, and until it was readable the claim could only be inferred from the
+// synced gadget, which cannot say what the AI thought it was doing at the time.
+static int CCircuitUnit_CmdQueueSize(CCircuitUnit* unit)
+{
+	int n = 0;
+	auto commands = unit->GetUnit()->GetCurrentCommands();
+	for (springai::Command* cmd : commands) {
+		++n;
+		delete cmd;
+	}
+	return n;
+}
+
 static int CCircuitUnit_CountQueued(CCircuitUnit* unit, CCircuitDef* buildDef)
 {
 	const int wanted = (buildDef == nullptr)
@@ -312,8 +564,11 @@ static int CCircuitUnit_CountQueued(CCircuitUnit* unit, CCircuitDef* buildDef)
 // factory's queue; the rest append. That is how a player lays down a fresh
 // queue, and it means no separate clear command is needed.
 //
-// Measured 2026-08-12: `count` is NOT multiplied engine-side. BAR's shift-adds-
-// five is the UI doing it, so one order is one unit.
+// SHIFT MULTIPLIES BY FIVE, so `count` here is 5x the units asked for.
+// CFactoryCAI::GetCountMultiplierFromOptions (rts/Sim/Units/CommandAI/
+// FactoryCAI.cpp:146) is `if (opts & SHIFT_KEY) ret *= 5; if (opts &
+// CONTROL_KEY) ret *= 20;` and runs on every append. CmdInsertBuild carries
+// neither and is the call to use; nothing calls this one.
 static void CCircuitUnit_CmdBuildUnit(CCircuitUnit* unit, CCircuitDef* buildDef,
 		int count, bool replace)
 {
@@ -380,6 +635,15 @@ static AIFloat3 CSetupManager_GetLanePos(CSetupManager* mgr)
 	return mgr->GetLanePos();
 }
 
+// Where the army HOLDS. CMilitaryManager::FillFrontPos picks the metal cluster
+// nearest lanePos and hands back that cluster's defence points, so this is the
+// one lever that decides whether the army stands at the front of the base or in
+// the middle of it.
+static void CSetupManager_SetLanePos(CSetupManager* mgr, const AIFloat3& pos)
+{
+	mgr->SetLanePos(pos);
+}
+
 static AIFloat3 CCircuitAI_GetChokePointPos(CCircuitAI* circuit, int idx)
 {
 	return circuit->GetChokePointPos(idx);
@@ -423,6 +687,17 @@ static CScriptArray* CCircuitAI_GetOwnStructsNear(CCircuitAI* circuit, const AIF
 	return arr;
 }
 
+static CScriptArray* CCircuitAI_GetOwnDamagedNear(CCircuitAI* circuit, const AIFloat3& pos, float radius)
+{
+	const std::vector<CCircuitUnit*> found = circuit->GetOwnDamagedNear(pos, radius);
+	CScriptArray* arr = CScriptArray::Create(gUnitArrayType, found.size());
+	asUINT i = 0;
+	for (CCircuitUnit* unit : found) {
+		arr->SetValue(i++, &unit);
+	}
+	return arr;
+}
+
 static float CCircuitAI_GetPathLength(CCircuitAI* circuit, CCircuitUnit* unit, const AIFloat3& to)
 {
 	return circuit->GetPathLength(unit, to);
@@ -441,6 +716,15 @@ static float CCircuitAI_GetTeamMetalFill(CCircuitAI* circuit, int otherTeamId)
 static float CCircuitAI_GetTunable(CCircuitAI* circuit, const std::string& name, float defVal)
 {
 	return circuit->GetTunable(name.c_str(), defVal);
+}
+
+// apex: monotonic microsecond clock so the script can profile its own sections.
+// Host-local wall time — the AI runs only on the host, so reading it cannot
+// desync; still, use it for logging only, never for a gameplay decision.
+static double CCircuitAI_ClockUs(CCircuitAI* circuit)
+{
+	return double(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
 static float CCircuitAI_GetDefBuildProgress(CCircuitAI* circuit, CCircuitDef* def)
@@ -506,6 +790,18 @@ static float CCircuitUnit_GetRulesParamFloat(CCircuitUnit* unit, const std::stri
 static std::string CCircuitUnit_GetRulesParamString(CCircuitUnit* unit, const std::string& key, const std::string& defVal)
 {
 	return unit->GetUnit()->GetRulesParamString(key.c_str(), defVal.c_str());
+}
+
+// Which kind of fight a task is. The script keeps its own register of fighter
+// tasks (Military::gSquads) but could not tell an attack squad from a raid,
+// scout, guard or support task, so anything counting "squads" counted all of
+// them. Returns FightType::_SIZE_ for a task that is not a fighter task at all,
+// rather than downcasting blind the way the GetBuildType binding below does.
+static int IUnitTask_GetFightType(IUnitTask* task)
+{
+	return (task->GetType() == IUnitTask::Type::FIGHTER)
+			? int(static_cast<IFighterTask*>(task)->GetFightType())
+			: int(IFighterTask::FightType::_SIZE_);
 }
 
 static CScriptArray* IUnitTask_GetUnits(IUnitTask* task)
@@ -740,12 +1036,17 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectBehaviour("IUnitTask", asBEHAVE_RELEASE, "void f()", asMETHODPR(IRefCounter, Release, (), int), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("IUnitTask", "int GetRefCount() const", asMETHODPR(IRefCounter, GetRefCount, () const, int), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("IUnitTask", "Type GetType() const", asMETHODPR(IUnitTask, GetType, () const, IUnitTask::Type), asCALL_THISCALL); ASSERT(r >= 0);
+	// Script ledgers remember tasks across frames; without this they cannot
+	// drop dead ones, and a remembered dead task returned from AiMakeTask is
+	// refused by AssignTask -- the unit idles forever on a stale handle.
+	r = engine->RegisterObjectMethod("IUnitTask", "bool IsDead() const", asMETHODPR(IUnitTask, IsDead, () const, bool), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("IUnitTask", "Type GetBuildType() const", asMETHODPR(IBuilderTask, GetBuildType, () const, IBuilderTask::BuildType), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("IUnitTask", "const AIFloat3& GetBuildPos() const", asMETHODPR(IBuilderTask, GetPosition, () const, const AIFloat3&), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("IUnitTask", "CCircuitDef@ const buildDef", asOFFSET(IBuilderTask, buildDef)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("IUnitTask", "CCircuitUnit@ const target", asOFFSET(IBuilderTask, target)); ASSERT(r >= 0);
 	gUnitArrayType = engine->GetTypeInfoByDecl("array<CCircuitUnit@>");
 	r = engine->RegisterObjectMethod("IUnitTask", "array<CCircuitUnit@>@ GetUnits() const", asFUNCTION(IUnitTask_GetUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("IUnitTask", "int GetFightType() const", asFUNCTION(IUnitTask_GetFightType), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("IUnitTask", "void Abort()", asMETHOD(IUnitTask, Abort), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("IUnitTask", "void Done()", asMETHOD(IUnitTask, Done), asCALL_THISCALL); ASSERT(r >= 0);
 
@@ -758,16 +1059,20 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetDefCount() const", asMETHOD(CCircuitAI, GetDefCount), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "CCircuitUnit@ GetTeamUnit(Id)", asMETHOD(CCircuitAI, GetTeamUnit), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "string GetMapName() const", asFUNCTION(CCircuitAI_GetMapName), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "AIFloat3 SnapBuildPos(CCircuitDef@, const AIFloat3& in) const", asFUNCTION(CCircuitAI_SnapBuildPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetEnemyTeamSize() const", asMETHOD(CCircuitAI, GetEnemyTeamSize), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "int CountEnemyDefNear(int, const AIFloat3& in, float)", asFUNCTION(CCircuitAI_CountEnemyDefNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "bool CanDefReach(CCircuitDef@, const AIFloat3& in, const AIFloat3& in)", asFUNCTION(CCircuitAI_CanDefReach), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "int ForgetEnemiesNear(const AIFloat3& in, float)", asFUNCTION(CCircuitAI_ForgetEnemiesNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "bool IsLoadSave() const", asMETHOD(CCircuitAI, IsLoadSave), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "Type GetBindedRole(Type) const", asMETHOD(CCircuitAI, GetBindedRole), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetLeadTeamId() const", asFUNCTION(CCircuitAI_GetLeadTeamId), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	// Sizing a quota: the unit limit, and what we are already holding of it.
+	r = engine->RegisterObjectMethod("CCircuitAI", "int GetUnitLimit() const", asFUNCTION(CCircuitAI_GetUnitLimit), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetUnitMax() const", asFUNCTION(CCircuitAI_GetUnitMax), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "int GetTeamUnitCount(bool) const", asFUNCTION(CCircuitAI_GetTeamUnitCount), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "Type GetSideId() const", asMETHOD(CCircuitAI, GetSideId), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "const string& GetSideName() const", asMETHOD(CCircuitAI, GetSideName), asCALL_THISCALL); ASSERT(r >= 0);
-	gIdArrayType = engine->GetTypeInfoByDecl("array<Id>");
 	r = engine->RegisterObjectMethod("CCircuitAI", "array<Id>@ GetTeamIds() const", asFUNCTION(CCircuitAI_GetTeamIds), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "void GiveUnits(const array<CCircuitUnit@>@+, int)", asFUNCTION(CCircuitAI_GiveUnits), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "void SendResources(float, float, int)", asFUNCTION(CCircuitAI_SendResources), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
@@ -778,6 +1083,7 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	// adds shares this process, so they can simply read each other.
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetDefBuildProgress(CCircuitDef@) const", asFUNCTION(CCircuitAI_GetDefBuildProgress), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetTunable(const string &in, float) const", asFUNCTION(CCircuitAI_GetTunable), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "double ClockUs() const", asFUNCTION(CCircuitAI_ClockUs), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "void PublishTeamValue(const string& in, float)", asFUNCTION(CCircuitAI_PublishTeamValue), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float ReadTeamValue(int, const string& in, float) const", asFUNCTION(CCircuitAI_ReadTeamValue), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "AIFloat3 GetBestWreckPos(const AIFloat3& in, float, float) const", asFUNCTION(CCircuitAI_GetBestWreckPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
@@ -804,6 +1110,7 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEngageBoost() const", asMETHOD(CCircuitAI, GetEngageBoost), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "array<CCircuitUnit@>@ GetOwnUnitsOfDef(CCircuitDef@, const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetOwnUnitsOfDef), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "array<CCircuitUnit@>@ GetOwnStructsNear(const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetOwnStructsNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "array<CCircuitUnit@>@ GetOwnDamagedNear(const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetOwnDamagedNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetPathLength(CCircuitUnit@, const AIFloat3& in)", asFUNCTION(CCircuitAI_GetPathLength), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEnemyCostAt(const AIFloat3& in, float) const", asFUNCTION(CCircuitAI_GetEnemyCostAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetBuilderThreatAt(const AIFloat3& in) const", asFUNCTION(CCircuitAI_GetBuilderThreatAt), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
@@ -865,8 +1172,17 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitDef", "float GetWaterThreat() const", asMETHOD(CCircuitDef, GetWaterThreat), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsAbleToFly() const", asMETHOD(CCircuitDef, IsAbleToFly), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsMobile() const", asMETHOD(CCircuitDef, IsMobile), asCALL_THISCALL); ASSERT(r >= 0);
+	// BUILD RANGE IS NOT A CONSTANT. apexearth: "players can tweak game settings
+	// which increase build range." Reading the def's own value is the only way a
+	// placement rule can stay correct under a modoption that changes it.
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetBuildDistance() const", asMETHOD(CCircuitDef, GetBuildDistance), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsMex() const", asMETHOD(CCircuitDef, IsMex), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsBuilder() const", asMETHOD(CCircuitDef, IsBuilder), asCALL_THISCALL); ASSERT(r >= 0);
+	// Native buildOptions lookup (an unordered_set::find), already computed for
+	// CircuitAI's own task assignment -- exposing it lets script guard a task
+	// against the "no constructor of ours can build this" silent no-op instead
+	// of approximating capability from cost or name (see IsAdvConDef).
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool CanBuild(CCircuitDef@) const", asMETHODPR(CCircuitDef, CanBuild, (const CCircuitDef*) const, bool), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitDef", "int maxThisUnit", asOFFSET(CCircuitDef, maxThisUnit)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitDef", "int sinceFrame", asOFFSET(CCircuitDef, sinceFrame)); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CCircuitDef", "int cooldown", asOFFSET(CCircuitDef, cooldown)); ASSERT(r >= 0);
@@ -907,6 +1223,15 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	// retreat task substitutes for everything it would otherwise build. A raw
 	// command moves the unit without consuming its task slot.
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdMoveTo(const AIFloat3& in)", asFUNCTION(CCircuitUnit_CmdMoveTo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdAttackGround(const AIFloat3& in)", asFUNCTION(CCircuitUnit_CmdAttackGround), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitUnit", "int GetStockpile()", asFUNCTION(CCircuitUnit_GetStockpile), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdStop()", asFUNCTION(CCircuitUnit_CmdStop), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdPatrolTo(const AIFloat3& in)", asFUNCTION(CCircuitUnit_CmdPatrolTo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEnemyAirCostNear(const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetEnemyAirCostNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	// apex: for the commander D-gun raid want -- see CCircuitUnit_PushDGun's
+	// own comment for why script only needs to get close and push once.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdCloak(bool)", asFUNCTION(CCircuitUnit_CmdCloak), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitUnit", "void PushDGun(float)", asFUNCTION(CCircuitUnit_PushDGun), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	// A factory told to repeat re-queues what it finishes, so a spam lab keeps
 	// producing instead of waiting to be handed each unit as a separate task.
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdRepeat(bool)", asFUNCTION(CCircuitUnit_CmdRepeat), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
@@ -916,6 +1241,7 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	// under the task scheme wipes a standing queue.
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdBuildUnit(CCircuitDef@, int, bool)", asFUNCTION(CCircuitUnit_CmdBuildUnit), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	// Reading the factory's own queue. Pass null to count every build order on it.
+	r = engine->RegisterObjectMethod("CCircuitUnit", "int CmdQueueSize()", asFUNCTION(CCircuitUnit_CmdQueueSize), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitUnit", "int CountQueued(CCircuitDef@)", asFUNCTION(CCircuitUnit_CountQueued), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	// Jump the queue without clearing it -- how an advanced constructor gets built
 	// first when the tier changes.
@@ -938,6 +1264,7 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	// AS docs / "Registering object methods" / "Composite members"
 	r = engine->RegisterObjectMethod("CSetupManager", "dictionary@ GetModOptions()", asMETHOD(CSetupScript, GetModOptions), asCALL_THISCALL, 0, asOFFSET(CSetupManager, script), true); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CSetupManager", "AIFloat3 GetBasePos() const", asFUNCTION(CSetupManager_GetBasePos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CSetupManager", "void SetLanePos(const AIFloat3& in)", asFUNCTION(CSetupManager_SetLanePos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CSetupManager", "AIFloat3 GetLanePos() const", asFUNCTION(CSetupManager_GetLanePos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 }
 
@@ -1057,9 +1384,18 @@ void CInitScript::RegisterMgr()
 	r = engine->RegisterObjectMethod("CEnemyManager", "float GetEnemyThreat(Type) const", asMETHODPR(CEnemyManager, GetEnemyThreat, (CCircuitDef::RoleT) const, float), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CEnemyManager", "const float mobileThreat", asOFFSET(CEnemyManager, mobileThreat)); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CEnemyManager", "float GetEnemyCost(Type) const", asMETHOD(CEnemyManager, GetEnemyCost), asCALL_THISCALL); ASSERT(r >= 0);
+	// GetEnemyCost never forgets: a raider seen once still counts an hour later.
+	// The Fresh variants count only what was seen within SetFreshSeconds().
+	r = engine->RegisterObjectMethod("CEnemyManager", "float GetEnemyCostFresh(Type) const", asMETHOD(CEnemyManager, GetEnemyCostFresh), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectProperty("CEnemyManager", "const float freshMobileThreat", asOFFSET(CEnemyManager, freshMobileThreat)); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CEnemyManager", "void SetFreshSeconds(float)", asMETHOD(CEnemyManager, SetFreshSeconds), asCALL_THISCALL); ASSERT(r >= 0);
 	// Centroid of the enemy groups we can see. Noisy by nature -- raiders in our
 	// own base pull it backwards -- so it suits a rally point, not a facing.
 	r = engine->RegisterObjectMethod("CEnemyManager", "AIFloat3 GetEnemyPos() const", asFUNCTION(CEnemyManager_GetEnemyPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CEnemyManager", "int GetEnemyGroupCount() const", asFUNCTION(CEnemyManager_GetEnemyGroupCount), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CEnemyManager", "AIFloat3 GetEnemyGroupPos(int) const", asFUNCTION(CEnemyManager_GetEnemyGroupPos), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CEnemyManager", "float GetEnemyGroupCost(int) const", asFUNCTION(CEnemyManager_GetEnemyGroupCost), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CEnemyManager", "float GetEnemyGroupRange(int) const", asFUNCTION(CEnemyManager_GetEnemyGroupRange), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectProperty("CEnemyManager", "float maxAAThreat", asOFFSET(CEnemyManager, maxAAThreat)); ASSERT(r >= 0);
 
 	CThreatMap* thrMap = circuit->GetThreatMap();
@@ -1081,6 +1417,8 @@ bool CInitScript::Init()
 	mainInfo.receiveMessage = script->GetFunc(mod, "void AiMessage(const string& in, int)");
 	mainInfo.unitFinished = script->GetFunc(mod, "void AiUnitFinished(CCircuitUnit@)");
 	mainInfo.unitDestroyed = script->GetFunc(mod, "void AiUnitDestroyed(CCircuitUnit@)");
+	mainInfo.unitDestroyedBy = script->GetFunc(mod, "void AiUnitDestroyedBy(CCircuitUnit@, CCircuitDef@)");
+	mainInfo.enemyDestroyed = script->GetFunc(mod, "void AiEnemyDestroyed(CCircuitDef@, const AIFloat3& in, bool)");
 	asIScriptFunction* main = script->GetFunc(mod, "void AiMain()");
 	if (main == nullptr) {
 		return false;
@@ -1097,9 +1435,28 @@ void CInitScript::Update()
 	if (mainInfo.update == nullptr) {
 		return;
 	}
+	// apex: the host runs every AI's script -- "it makes me lag" gets a number
+	// before it gets an optimization. One line per game-minute per player.
+	const auto t0 = std::chrono::steady_clock::now();
 	asIScriptContext* ctx = script->PrepareContext(mainInfo.update);
 	script->Exec(ctx);
 	script->ReturnContext(ctx);
+	const uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - t0).count();
+	perfUpdateUs += us;
+	perfUpdateMaxUs = std::max(perfUpdateMaxUs, us);
+	++perfUpdateCalls;
+	const int frame = circuit->GetLastFrame();
+	if (frame >= perfNextLog) {
+		perfNextLog = frame + 1800;   // one game-minute at 30 fps
+		circuit->LOG("apex: perf AiUpdate calls=%u totalMs=%.1f avgUs=%.0f maxMs=%.1f",
+				perfUpdateCalls, perfUpdateUs / 1000.f,
+				(perfUpdateCalls > 0) ? float(perfUpdateUs) / float(perfUpdateCalls) : 0.f,
+				perfUpdateMaxUs / 1000.f);
+		perfUpdateUs = 0;
+		perfUpdateMaxUs = 0;
+		perfUpdateCalls = 0;
+	}
 }
 
 void CInitScript::LuaMessage(const char* inData)
@@ -1132,6 +1489,31 @@ void CInitScript::UnitDestroyed(CCircuitUnit* unit)
 	}
 	asIScriptContext* ctx = script->PrepareContext(mainInfo.unitDestroyed);
 	ctx->SetArgObject(0, unit);
+	script->Exec(ctx);
+	script->ReturnContext(ctx);
+}
+
+void CInitScript::UnitDestroyedBy(CCircuitUnit* unit, CCircuitDef* attackerDef)
+{
+	if ((mainInfo.unitDestroyedBy == nullptr) || (unit == nullptr) || (attackerDef == nullptr)) {
+		return;
+	}
+	asIScriptContext* ctx = script->PrepareContext(mainInfo.unitDestroyedBy);
+	ctx->SetArgObject(0, unit);
+	ctx->SetArgObject(1, attackerDef);
+	script->Exec(ctx);
+	script->ReturnContext(ctx);
+}
+
+void CInitScript::EnemyDestroyed(CCircuitDef* edef, const springai::AIFloat3& pos, bool byUs)
+{
+	if ((mainInfo.enemyDestroyed == nullptr) || (edef == nullptr)) {
+		return;
+	}
+	asIScriptContext* ctx = script->PrepareContext(mainInfo.enemyDestroyed);
+	ctx->SetArgObject(0, edef);
+	ctx->SetArgAddress(1, &const_cast<springai::AIFloat3&>(pos));
+	ctx->SetArgByte(2, byUs ? 1 : 0);
 	script->Exec(ctx);
 	script->ReturnContext(ctx);
 }

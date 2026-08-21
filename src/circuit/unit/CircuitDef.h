@@ -165,6 +165,13 @@ public:
 	bool IsRoleSuper()    const { return role & RoleMask::SUPER; }
 	bool IsRoleComm()     const { return role & RoleMask::COMM; }
 
+	// apex: THE ONE DEFINITION OF A CHARGER. Titan, Behemoth and Juggernaut
+	// carry role SUPER, not HEAVY, so the four copies of
+	// `IsRoleHeavy() && IsAttrMelee()` that named those three units matched
+	// none of them and every charge path was dead.
+	bool IsCharger()      const { return (role & (RoleMask::HEAVY | RoleMask::SUPER))
+			&& (attr & AttrMask::MELEE); }
+
 	bool IsAttrMelee()    const { return attr & AttrMask::MELEE; }
 	bool IsAttrBoost()    const { return attr & AttrMask::BOOST; }
 	bool IsAttrNoJump()   const { return attr & AttrMask::NO_JUMP; }
@@ -345,6 +352,13 @@ public:
 	float GetSpeed()        const { return speed; }
 	float GetLosRadius()    const { return losRadius; }
 	float GetSonarRadius()  const { return sonarRadius; }
+	// CMilitaryManager sets isRadar/isJammer only inside the IMMOBILE branch of
+	// its def loop, so IsRadar()/IsJammer() are false for every mobile radar and
+	// jammer. Those flags cannot simply be widened: ISensorTask, CRadarTask and
+	// CSonarTask use them as the predicate for picking a STRUCTURE to build.
+	// These are the raw radii instead, read once alongside losRadius.
+	float GetRadarRadius()  const { return radarRadius; }
+	float GetJammerRadius() const { return jammerRadius; }
 	float GetCostM()        const { return costM; }
 	float GetCostE()        const { return costE; }
 	float GetUpkeepM()      const { return upkeepM; }
@@ -495,6 +509,8 @@ private:
 	float speed;
 	float losRadius;
 	float sonarRadius;
+	float radarRadius;
+	float jammerRadius;
 	float costM;
 	float costE;
 	float upkeepM;
