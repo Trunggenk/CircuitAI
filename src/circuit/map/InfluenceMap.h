@@ -106,16 +106,25 @@ private:
 	float rangeScale = 1.f;  // thread var
 	float defRadius = 0.f;
 
+// apex: the WIDGET half of the debug visualisation is not a debug build feature.
+// It streams the grid to a LuaRules gadget over CallRules and needs no SDL, but
+// it lived inside DEBUG_VIS -- which only CIRCUIT_DEBUG defines, and which also
+// drags in SDL2 -- so `~widraw` did nothing in every shipped build. Only the
+// SDL-window view below stays gated.
+private:
+	bool isWidgetDrawing = false;
+	bool isWidgetPrinting = false;
+	void UpdateWidgetVis();
+public:
+	void ToggleWidgetDraw();
+	void ToggleWidgetPrint();
+
 #ifdef DEBUG_VIS
 private:
 	std::vector<std::pair<uint32_t, float*>> sdlWindows;
-	bool isWidgetDrawing = false;
-	bool isWidgetPrinting = false;
 	void UpdateVis();
 public:
 	void ToggleSDLVis();
-	void ToggleWidgetDraw();
-	void ToggleWidgetPrint();
 	void SetMaxThreat(float maxThreat);
 #endif
 };

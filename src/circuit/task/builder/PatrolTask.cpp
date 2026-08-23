@@ -31,8 +31,9 @@ void CBPatrolTask::AssignTo(CCircuitUnit* unit)
 	IPatrolTask::AssignTo(unit);
 
 	if (unit->HasDGun()) {
-		const float range = std::max(unit->GetDGunRange(), unit->GetCircuitDef()->GetLosRadius());
-		unit->PushDGunAct(new CDGunAction(unit, range));
+		// apex: dgun range only, not LOS -- same as BuilderTask; a patrolling
+		// builder must not pursue everything in sight.
+		unit->PushDGunAct(new CDGunAction(unit, unit->GetDGunRange()));
 	}
 //	if (unit->GetCircuitDef()->IsAbleToCapture()) {
 //		unit->PushBack(new CCaptureAction(unit, 500.f));

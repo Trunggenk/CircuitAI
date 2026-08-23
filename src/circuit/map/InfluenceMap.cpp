@@ -19,6 +19,7 @@
 #include "json/json.h"
 
 #include "spring/SpringCallback.h"
+#include "Lua.h"   // CallRules, for the always-compiled widget streaming
 
 //#include "Cheats.h"
 #include "Feature.h"
@@ -178,6 +179,7 @@ void CInfluenceMap::Apply()
 
 	FrameMarkEnd(profiler.GetInflUpdateName(manager->GetCircuit()->GetSkirmishAIId()));
 
+	UpdateWidgetVis();
 #ifdef DEBUG_VIS
 	UpdateVis();
 #endif
@@ -440,6 +442,53 @@ inline void CInfluenceMap::PosToXZ(const AIFloat3& pos, int& x, int& z) const
 	z = (int)pos.z / squareSize;
 }
 
+// apex: always compiled -- see InfluenceMap.h. Streams the grid to whichever
+// LuaRules gadget answered the handshake; no SDL involved.
+void CInfluenceMap::UpdateWidgetVis()
+{
+	if (!isWidgetDrawing && !isWidgetPrinting) {
+		return;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	std::ostringstream cmd;
+	cmd << "ai_thr_data:";
+	cmd.write(reinterpret_cast<const char*>(influence), mapSize * sizeof(float));
+	std::string s = cmd.str();
+	circuit->GetLua()->CallRules(s.c_str(), s.size());
+}
+
+void CInfluenceMap::ToggleWidgetDraw()
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	std::string cmd("ai_thr_draw:");
+	std::string result = circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
+
+	isWidgetDrawing = (result == "1");
+	if (isWidgetDrawing) {
+		cmd = utils::int_to_string(squareSize, "ai_thr_size:%i");
+		cmd += utils::float_to_string(INFL_BASE, " %f");
+		circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
+
+		UpdateWidgetVis();
+	}
+}
+
+void CInfluenceMap::ToggleWidgetPrint()
+{
+	CCircuitAI* circuit = manager->GetCircuit();
+	std::string cmd("ai_thr_print:");
+	std::string result = circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
+
+	isWidgetPrinting = (result == "1");
+	if (isWidgetPrinting) {
+		cmd = utils::int_to_string(squareSize, "ai_thr_size:%i");
+		cmd += utils::float_to_string(INFL_BASE, " %f");
+		circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
+
+		UpdateWidgetVis();
+	}
+}
+
 #ifdef DEBUG_VIS
 #define ENEMY(x, i, v) {	\
 	x[i * 3 + 0] = .10f * v;  /*R*/	\
@@ -455,14 +504,6 @@ inline void CInfluenceMap::PosToXZ(const AIFloat3& pos, int& x, int& z) const
 void CInfluenceMap::UpdateVis()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (isWidgetDrawing || isWidgetPrinting) {
-		std::ostringstream cmd;
-		cmd << "ai_thr_data:";
-		cmd.write(reinterpret_cast<const char*>(influence), mapSize * sizeof(float));
-		std::string s = cmd.str();
-		circuit->GetLua()->CallRules(s.c_str(), s.size());
-	}
-
 	if (sdlWindows.empty()) {
 		return;
 	}
@@ -558,37 +599,7 @@ void CInfluenceMap::ToggleSDLVis()
 	}
 }
 
-void CInfluenceMap::ToggleWidgetDraw()
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	std::string cmd("ai_thr_draw:");
-	std::string result = circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
 
-	isWidgetDrawing = (result == "1");
-	if (isWidgetDrawing) {
-		cmd = utils::int_to_string(squareSize, "ai_thr_size:%i");
-		cmd += utils::float_to_string(INFL_BASE, " %f");
-		circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
-
-		UpdateVis();
-	}
-}
-
-void CInfluenceMap::ToggleWidgetPrint()
-{
-	CCircuitAI* circuit = manager->GetCircuit();
-	std::string cmd("ai_thr_print:");
-	std::string result = circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
-
-	isWidgetPrinting = (result == "1");
-	if (isWidgetPrinting) {
-		cmd = utils::int_to_string(squareSize, "ai_thr_size:%i");
-		cmd += utils::float_to_string(INFL_BASE, " %f");
-		circuit->GetLua()->CallRules(cmd.c_str(), cmd.size());
-
-		UpdateVis();
-	}
-}
 
 void CInfluenceMap::SetMaxThreat(float maxThreat)
 {
