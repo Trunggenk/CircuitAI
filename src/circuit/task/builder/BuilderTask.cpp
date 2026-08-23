@@ -140,8 +140,11 @@ void IBuilderTask::AssignTo(CCircuitUnit* unit)
 	}
 
 	if (unit->HasDGun()) {
-		const float range = std::max(unit->GetDGunRange(), unit->GetCircuitDef()->GetLosRadius());
-		unit->PushDGunAct(new CDGunAction(unit, range));
+		// apex: dgun range only, not LOS. At LOS radius the DGun order (queue-
+		// replacing, no SHIFT) walks a working commander after anything he can
+		// see -- the chase-and-forget apexearth watched. Close threats his
+		// regular gun already answers; the D-gun stays point-blank.
+		unit->PushDGunAct(new CDGunAction(unit, unit->GetDGunRange()));
 	}
 	if (unit->GetCircuitDef()->IsAbleToCapture()) {
 		unit->PushBack(new CCaptureAction(unit, 500.f));
@@ -737,6 +740,9 @@ void IBuilderTask::FindFacing(const springai::AIFloat3& pos)
 void IBuilderTask::ExecuteChain(SBuildChain* chain)
 {
 	assert(chain != nullptr);
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	// build_chain.json hubs are dead for apex.
+	return;
 	CCircuitAI* circuit = manager->GetCircuit();
 
 	CTerrainManager* terrainMgr = circuit->GetTerrainManager();

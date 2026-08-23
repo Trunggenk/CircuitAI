@@ -1013,7 +1013,34 @@ int CEconomyManager::FindOpenMexSpot(CCircuitUnit* unit, const AIFloat3& pos, fl
 		}
 		return false;
 	};
-	return metalMgr->GetSpotToBuild(pos, predicate);
+	int idx = metalMgr->GetSpotToBuild(pos, predicate);
+
+	// apexearth 2026-08-22: "our cons that go out and get mexes sometimes choose
+	// to go to far away mexes instead of the mexes that are closest to where
+	// they are." GetSpotToBuild walks the CLUSTER graph, commits to one cluster,
+	// and then takes the nearest spot INSIDE it -- so an open spot in a
+	// neighbouring cluster that is physically nearer is never a candidate. The
+	// predicate is the same reachability/threat/buildability test, so a spot it
+	// accepts is equally valid; sweep for one that is genuinely closer.
+	// Spot counts are in the tens and a mex is ordered a few times a minute, so
+	// the extra predicate calls are not on any hot path.
+	if (circuit->GetTunable("apex_mex_nearest", 0.f) > 0.f) {
+		float bestSq = (idx >= 0)
+				? spots[idx].position.SqDistance2D(pos)
+				: std::numeric_limits<float>::max();
+		for (unsigned i = 0; i < spots.size(); ++i) {
+			const float sqd = spots[i].position.SqDistance2D(pos);
+			if (sqd >= bestSq) {
+				continue;
+			}
+			if (!predicate(i)) {
+				continue;
+			}
+			bestSq = sqd;
+			idx = (int)i;
+		}
+	}
+	return idx;
 }
 
 AIFloat3 CEconomyManager::GetMexSpotPos(int spotId) const
@@ -1257,6 +1284,8 @@ bool CEconomyManager::IsEnoughEnergy(IBuilderTask const* task, CCircuitDef const
 IBuilderTask* CEconomyManager::MakeEconomyTasks(const AIFloat3& position, CCircuitUnit* unit)
 {
 	ZoneScoped;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return nullptr;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (!builderMgr->CanEnqueueTask()) {
@@ -1283,6 +1312,8 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 {
 	assert(unit != nullptr);
 	ZoneScoped;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return nullptr;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (!builderMgr->CanEnqueueTask(16)) {
@@ -1572,6 +1603,8 @@ IBuilderTask* CEconomyManager::UpdateMetalTasks(const AIFloat3& position, CCircu
 IBuilderTask* CEconomyManager::UpdateReclaimTasks(const AIFloat3& position, CCircuitUnit* unit, bool isNear)
 {
 	ZoneScoped;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return nullptr;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (/*!builderManager->CanEnqueueTask() || */(unit == nullptr) || !unit->GetCircuitDef()->IsAbleToReclaim()) {
@@ -1857,6 +1890,8 @@ IBuilderTask* CEconomyManager::UpdateEnergyTasks(const AIFloat3& position, CCirc
 IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuitUnit* unit)
 {
 	ZoneScoped;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return nullptr;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (!builderMgr->CanEnqueueTask(32) || !builderMgr->GetTasks(IBuilderTask::BuildType::GEO).empty() || !geoDefs.HasAvail()) {
@@ -1905,6 +1940,8 @@ IBuilderTask* CEconomyManager::UpdateGeoTasks(const AIFloat3& position, CCircuit
 IBuilderTask* CEconomyManager::UpdateFactoryTasks(const AIFloat3& position, CCircuitUnit* unit)
 {
 	ZoneScoped;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return nullptr;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (!builderMgr->CanEnqueueTask(64) || isEnergyRequired) {
@@ -2118,6 +2155,8 @@ IBuilderTask* CEconomyManager::UpdateFactoryTasks()
 IBuilderTask* CEconomyManager::UpdateStorageTasks()
 {
 	ZoneScoped;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return nullptr;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (!builderMgr->CanEnqueueTask(32)) {
@@ -2210,6 +2249,8 @@ IBuilderTask* CEconomyManager::UpdatePylonTasks()
 
 IBuilderTask* CEconomyManager::CheckMobileAssistRequired(const AIFloat3& position, CCircuitUnit* unit)
 {
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return nullptr;
 	CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	if (!factoryMgr->IsAssistRequired() || !builderMgr->HasFreeAssists(unit)
@@ -2237,6 +2278,12 @@ IBuilderTask* CEconomyManager::CheckMobileAssistRequired(const AIFloat3& positio
 
 void CEconomyManager::StartFactoryJob(const float seconds)
 {
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	// Unschedule self; also never schedules the recurring UpdateFactoryTasks job.
+	circuit->GetScheduler()->RemoveJob(startFactory);
+	startFactory = nullptr;
+	return;
+
 	CFactoryManager* factoryMgr = circuit->GetFactoryManager();
 	if ((factoryMgr->GetFactoryCount() == 0) && circuit->GetBuilderManager()->GetTasks(IBuilderTask::BuildType::FACTORY).empty()) {
 		CCircuitUnit* comm = circuit->GetSetupManager()->GetCommander();
@@ -2373,6 +2420,8 @@ void CEconomyManager::DelFactoryInfo(CCircuitUnit* unit)
 bool CEconomyManager::CheckAirpadRequired(const AIFloat3& position, CCircuitUnit* unit, IBuilderTask*& outTask)
 {
 	outTask = nullptr;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return false;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	CMilitaryManager* militaryMgr = circuit->GetMilitaryManager();
@@ -2429,6 +2478,8 @@ bool CEconomyManager::CheckAirpadRequired(const AIFloat3& position, CCircuitUnit
 bool CEconomyManager::CheckAssistRequired(const AIFloat3& position, CCircuitUnit* unit, IBuilderTask*& outTask)
 {
 	outTask = nullptr;
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return false;
 
 	CBuilderManager* builderMgr = circuit->GetBuilderManager();
 	const int nanoQueued = builderMgr->GetTasks(IBuilderTask::BuildType::NANO).size();
@@ -2613,6 +2664,8 @@ bool CEconomyManager::HasNoPurpose(const CCircuitDef::Id defId) const
 
 void CEconomyManager::ReclaimOldConvert(const SConvertExt* convertExt)
 {
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return;
 	if (circuit->IsLoadSave() || (reclConvertEff <= 0.f) || (IsEnergyFull() && !IsEnergyStalling())) {
 		return;
 	}
@@ -2651,6 +2704,8 @@ void CEconomyManager::ReclaimOldConvert(const SConvertExt* convertExt)
 
 void CEconomyManager::ReclaimOldEnergy(const SEnergyExt* energyExt)
 {
+	// Brain overhaul 2026-08-22: the DLL originates no economy/build decisions; the script Brain does.
+	return;
 	float energyIncome = GetAvgEnergyIncome();
 	if (circuit->IsLoadSave() || (reclEnergyEff <= 0.f) || (energyIncome < energyExt->cond.energyIncome)) {
 		return;
