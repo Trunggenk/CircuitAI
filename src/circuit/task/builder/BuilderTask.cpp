@@ -31,6 +31,7 @@
 #include "spring/SpringMap.h"
 
 #include "AISCommands.h"
+#include "Log.h"
 
 namespace circuit {
 
@@ -308,13 +309,76 @@ bool IBuilderTask::Execute(CCircuitUnit* unit)
 	// Facing first (FindBuildSite recomputes it identically): the parity snap
 	// needs it because the engine swaps xsize/zsize for east/west.
 	FindFacing(position);
-	if (isFixed || !circuit->SnapToBaseGrid(position, pos, buildDef, facing)) {
-		pos = (shake > .0f) ? utils::get_near_pos(position, shake) : position;
+	// A RETRY MUST PICK A NEW SPOT.
+	//
+	// FindBuildSite is deterministic from `position`, so a site the builder
+	// cannot actually reach was handed back identically on every retry: the con
+	// took the order, never moved, went idle, and did it again until the task
+	// aborted -- measured with the builder parked at the SAME distance across
+	// consecutive aborts (685, 685, 685) while its site stayed put (659 from
+	// home), 362 aborted advanced labs and none built. Walk the search origin
+	// out on each failure so a later attempt looks at different ground.
+	//
+	// RANDOM, not a fixed walk. The same task is handed back to the same
+	// constructor after each failure (OnUnitIdle re-Executes, then the orphan
+	// is re-adopted by whoever asks -- usually the same con, since it is the
+	// one electing), so a deterministic offset means every retry repeats the
+	// previous attempt's behaviour. apexearth: "we keep retrying with the same
+	// cons that fail... add more variation". A random bearing at a radius that
+	// widens with each failure explores instead of repeating, and two cons
+	// failing the same task diverge instead of colliding.
+	AIFloat3 origin = position;
+	if (buildFails > 0) {
+		const float foot = std::max(buildDef->GetFootX(), buildDef->GetFootZ())
+				* SQUARE_SIZE * 2;
+		origin = utils::get_radial_pos(position, foot * float(buildFails));
+		CTerrainManager::CorrectPosition(origin);
+	}
+	const bool onGrid = !isFixed && circuit->SnapToBaseGrid(origin, pos, buildDef, facing);
+	if (!onGrid) {
+		pos = (shake > .0f) ? utils::get_near_pos(origin, shake) : origin;
 	}
 	CTerrainManager::CorrectPosition(pos);
 
-	const float searchRadius = 200 * SQUARE_SIZE;
+	// A LATTICE SLOT IS A DECISION, NOT A HINT.
+	//
+	// The search below reaches 1600 elmos, so a slot blocked by one building
+	// becomes a building up to 1600 elmos away. That is the sprawl, and it is
+	// also why rows never tiled: the spiral steps by ONE build square, so a
+	// nudged placement leaves the lattice phase, overlaps the neighbouring slot,
+	// and the neighbour is nudged in turn. On the grid, try the slot alone first
+	// and take the wide search only when the slot genuinely cannot be had --
+	// recording it, so script can decide whether to reclaim what stands there.
+	// Never worse than the wide search; exact whenever the slot is free.
+	// The slot is PROBED read-only first. FindBuildSite commits through
+	// SetBuildPos, which registers a blocker at whatever it settles on, so
+	// calling it twice makes the second search step around the first call's own
+	// reservation.
+	float searchRadius = 200 * SQUARE_SIZE;
+	if (onGrid) {
+		const float slot = std::max(buildDef->GetFootX(), buildDef->GetFootZ())
+				* SQUARE_SIZE * 2;
+		CTerrainManager* terrainMgr = manager->GetCircuit()->GetTerrainManager();
+		const AIFloat3 probe = terrainMgr->FindBuildSite(buildDef, pos, slot, facing);
+		if (utils::is_valid(probe) && (probe.SqDistance2D(pos) <= SQUARE(SQUARE_SIZE))) {
+			searchRadius = slot;   // the slot is free: hold the task to it
+		} else {
+			circuit->NoteBuildBlocked(pos);   // script decides whether to clear it
+		}
+	}
 	FindBuildSite(unit, pos, searchRadius);
+
+	// WHY A TASK NEVER BECOMES A BUILDING. Everything upstream is logged --
+	// the want, the price, the request -- and this step, where the site search
+	// fails and the builder is handed back to FallbackTask, was silent. A team
+	// opened 145 advanced-lab requests and started zero nanoframes with no line
+	// anywhere saying so.
+	if (!utils::is_valid(buildPos)) {
+		circuit->LOG("apex: site-fail t=%i %s bt=%i want=%.0f,%.0f snapped=%.0f,%.0f r=%.0f",
+				circuit->GetTeamId(),
+				(buildDef != nullptr) ? buildDef->GetDef()->GetName() : "?",
+				int(buildType), position.x, position.z, pos.x, pos.z, searchRadius);
+	}
 
 	if (utils::is_valid(buildPos)) {
 		TRY_UNIT(circuit, unit,
@@ -339,8 +403,21 @@ void IBuilderTask::OnUnitIdle(CCircuitUnit* unit)
 	} else if (buildFails <= TASK_RETRIES) {
 		RemoveAssignee(unit);
 	} else if (target == nullptr) {
+		// ABORTING NO LONGER POISONS THE GROUND.
+		//
+		// Upstream stamped a permanent blocker at buildPos here, with its own
+		// FIXME asking for a timer. Nothing ever removed it, so ONE failure made
+		// that spot unbuildable for the rest of the game -- and since the next
+		// attempt sites further out, fails, and blocks that too, the buildable
+		// area shrinks without bound. Measured on Supreme Isthmus 8v8: a player
+		// aborted 635 advanced-lab tasks and built none, its chosen site walking
+		// steadily away from home (642 -> 768) as the ground was consumed, while
+		// its cheap farm builds went up fine throughout.
+		//
+		// A genuinely unbuildable spot is already refused by FindBuildSite (which
+		// logs apex: site-fail), so the blocker was insuring against a case the
+		// site search answers on its own.
 		manager->AbortTask(this);
-		manager->GetCircuit()->GetTerrainManager()->AddBlocker(buildDef, buildPos, facing);  // FIXME: Remove blocker on timer? Or when air con appears
 	}
 }
 
@@ -478,8 +555,15 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 	CCircuitAI* circuit = manager->GetCircuit();
 
 	// FIXME: Replace const 1000.0f with build time?
+	// apex: default OFF. Stock aborts any >1000-metal task without a started
+	// frame the moment average income dips to 60% of its creation-time read
+	// during a stall -- which is every expensive walk in a spiky economy, and
+	// exactly why heavy front turrets never finished while 85-metal LLTs did.
+	// The script market already prices stalls (MCostScale, EPriceCostAt); a
+	// second, hidden veto underneath it is the AI fighting itself.
 	CEconomyManager* ecoMgr = circuit->GetEconomyManager();
-	if ((cost.metal > 1000.f)
+	if ((circuit->GetTunable("apex_stock_stall_abort", 0.f) > 0.f)
+		&& (cost.metal > 1000.f)
 		&& (target == nullptr)
 		&& (((ecoMgr->GetAvgMetalIncome() < savedIncome.metal * 0.6f) && (ecoMgr->GetAvgMetalIncome() * 2.0f < ecoMgr->GetMetalPull()))
 			|| ((ecoMgr->GetAvgEnergyIncome() < savedIncome.energy * 0.6f) && (ecoMgr->GetAvgEnergyIncome() * 2.0f < ecoMgr->GetEnergyPull())))

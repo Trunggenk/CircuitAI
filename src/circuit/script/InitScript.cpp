@@ -360,6 +360,11 @@ static void CCircuitUnit_CmdPatrolTo(CCircuitUnit* unit, const AIFloat3& pos)
 // apex: enemy AIR value near a point, for the team interceptor pool -- each
 // player publishes this at home and fighters fly to the worst-hit ally.
 // Registry walk, called ~once per second per player.
+static float CCircuitAI_GetEnemyMaxMobileCostM(CCircuitAI* circuit)
+{
+	return circuit->GetEnemyManager()->GetEnemyMaxMobileCostM();
+}
+
 static float CCircuitAI_GetEnemyAirCostNear(CCircuitAI* circuit, const springai::AIFloat3& pos, float radius)
 {
 	return circuit->GetEnemyManager()->GetEnemyAirCostNear(pos, radius);
@@ -1218,6 +1223,18 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitDef", "float GetMakeE() const", asMETHOD(CCircuitDef, GetMakeE), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsNeedGeo() const", asMETHOD(CCircuitDef, IsNeedGeo), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "int GetAreaCells() const", asMETHOD(CCircuitDef, GetAreaCells), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "int GetFootX() const", asMETHOD(CCircuitDef, GetFootX), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "int GetFootZ() const", asMETHOD(CCircuitDef, GetFootZ), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetHealth() const", asMETHOD(CCircuitDef, GetHealth), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetAoe() const", asMETHOD(CCircuitDef, GetAoe), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsAlwaysHitDef() const", asMETHOD(CCircuitDef, IsAlwaysHit), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsDumbFireDef() const", asMETHOD(CCircuitDef, IsDumbFire), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetRawDps() const", asMETHOD(CCircuitDef, GetRawDps), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetRawDmg() const", asMETHOD(CCircuitDef, GetRawDmg), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetBlastRadius() const", asMETHOD(CCircuitDef, GetBlastRadius), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetBlastDamage() const", asMETHOD(CCircuitDef, GetBlastDamage), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "float GetBlastEdge() const", asMETHOD(CCircuitDef, GetBlastEdge), asCALL_THISCALL); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitDef", "void SetLatticeStride(float, float)", asMETHOD(CCircuitDef, SetLatticeStride), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsRadarDef() const", asMETHOD(CCircuitDef, IsRadar), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "bool IsJammerDef() const", asMETHOD(CCircuitDef, IsJammer), asCALL_THISCALL); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitDef", "float GetRadarRadius() const", asMETHOD(CCircuitDef, GetRadarRadius), asCALL_THISCALL); ASSERT(r >= 0);
@@ -1282,6 +1299,7 @@ CInitScript::CInitScript(CScriptManager* scr, CCircuitAI* ai)
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdStop()", asFUNCTION(CCircuitUnit_CmdStop), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdPatrolTo(const AIFloat3& in)", asFUNCTION(CCircuitUnit_CmdPatrolTo), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEnemyAirCostNear(const AIFloat3& in, float)", asFUNCTION(CCircuitAI_GetEnemyAirCostNear), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
+	r = engine->RegisterObjectMethod("CCircuitAI", "float GetEnemyMaxMobileCostM() const", asFUNCTION(CCircuitAI_GetEnemyMaxMobileCostM), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
 	// apex: for the commander D-gun raid want -- see CCircuitUnit_PushDGun's
 	// own comment for why script only needs to get close and push once.
 	r = engine->RegisterObjectMethod("CCircuitUnit", "void CmdCloak(bool)", asFUNCTION(CCircuitUnit_CmdCloak), asCALL_CDECL_OBJFIRST); ASSERT(r >= 0);
