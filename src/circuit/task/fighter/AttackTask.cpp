@@ -454,6 +454,12 @@ void CAttackTask::Update()
 		}
 	}
 
+	// Everyone low with nobody under their own bar: leave together before the
+	// enemy finishes the set. See ISquadTask::TryAllLowFallback.
+	if (TryAllLowFallback()) {
+		return;
+	}
+
 	/*
 	 * Regroup if required
 	 */
@@ -631,21 +637,59 @@ void CAttackTask::Update()
 	if (flankRoll < 0) {
 		const int pct = (int)circuit->GetTunable("apex_flank_pct", 35.f);
 		flankRoll = (rand() % 100 < pct) ? ((rand() % 2 == 0) ? 1 : 2) : 0;
+		// apex: a share of flanks go DEEP -- the via sits at the map edge
+		// abeam the approach, his "took some Titans and walked them down
+		// the side of the map at the enemy".
+		if (flankRoll > 0) {
+			const int dpct = (int)circuit->GetTunable("apex_flank_deep_pct", 35.f);
+			flankDeep = (rand() % 100 < dpct);
+		}
 	}
 	AIFloat3 endPos = position;
 	if (flankRoll > 0) {
 		if (!utils::is_valid(flankVia)) {
 			AIFloat3 dir = position - startPos;
 			const float dist = sqrtf(dir.SqLength2D());
-			if (dist > circuit->GetTunable("apex_flank_min_dist", 1200.f)) {
+			// apex: FLANKS WORK ON SMALL MAPS TOO (apexearth 2026-08-29:
+			// "Make flanks more flexible in math... I'd say it's still
+			// feasible"). The old gate demanded a 1200-elmo approach and the
+			// swing scaled with approach LENGTH, so a close front produced a
+			// pointless wiggle and the gate killed it -- zero flanks in his
+			// Glacier games against 13 on Isthmus. The floor is now the
+			// squad's own engagement envelope: flank whenever the target sits
+			// beyond our reach, and swing at least two weapon-ranges wide so
+			// the lane passes OUTSIDE the direct corridor's firing arc
+			// whatever the approach length. CorrectPosition clamps the swing
+			// on-map, so a small map degrades into the deep side lane rather
+			// than into no flank at all.
+			const float minDist = std::max(
+					circuit->GetTunable("apex_flank_min_dist", 0.f),
+					highestRange);
+			if (dist > minDist) {
 				dir.SafeNormalize2D();
 				const AIFloat3 perp = (flankRoll == 1)
 						? AIFloat3(-dir.z, 0.f, dir.x)
 						: AIFloat3(dir.z, 0.f, -dir.x);
-				AIFloat3 via = (startPos + position) * 0.5f
-						+ perp * (dist * circuit->GetTunable("apex_flank_frac", 0.45f));
-				CTerrainManager::CorrectPosition(via);
+				const AIFloat3 mid = (startPos + position) * 0.5f;
+				const float swing = std::max(
+						dist * circuit->GetTunable("apex_flank_frac", 0.45f),
+						highestRange * 2.f);
+				AIFloat3 via = mid
+						+ perp * (flankDeep ? 100000.f : swing);
+				CTerrainManager::CorrectPosition(via);  // a deep via clamps to the border
+				if (flankDeep) {
+					AIFloat3 in_ = mid - via;
+					in_.SafeNormalize2D();
+					via += in_ * 400.f;  // off the border seam, still the side lane
+					CTerrainManager::CorrectPosition(via);
+				}
 				flankVia = via;
+				// The intent ping was this path's only witness and it is off
+				// in his games; one line per task makes flanking visible in
+				// the infolog.
+				circuit->LOG("apex: flank t=%i %s via=%.0f,%.0f dist=%.0f",
+						circuit->GetTeamId(), flankDeep ? "deep" : "side",
+						via.x, via.z, dist);
 			}
 		}
 		if (utils::is_valid(flankVia)) {
@@ -794,6 +838,7 @@ void CAttackTask::FindTarget()
 	const int noChaseCat = cdef->GetNoChaseCategory();
 
 	CEnemyInfo* bestTarget = nullptr;
+	int bestGroup = -1;
 	bool bestDive = false;
 	diveCommit = false;
 	// Tuning inputs. Every metric in the stats export is an OUTCOME; to choose a
@@ -1184,6 +1229,7 @@ void CAttackTask::FindTarget()
 			if (minSqDist > sqOEDist) {
 				minSqDist = sqOEDist;
 				bestTarget = enemy;
+				bestGroup = (int)i;
 				bestDive = isDive;
 				bestInfl = group.influence;
 				bestNear = localInfl;
@@ -1202,6 +1248,57 @@ void CAttackTask::FindTarget()
 		}
 		SetTarget(bestTarget);
 		position = GetTarget()->GetPos();
+		// apex: WRAP THE EDGE, NOT THE MIDDLE. apexearth, watching arena
+		// fights: "We tend to push into enemies which are backing up and
+		// forming an encirclement around us... Preferably we all shift to
+		// one side and try to wrap around the edge of their line and then
+		// swallow them." Flanking bonus makes the wrapped force take bonus
+		// damage from every wing, so pressing the centre of a wide line is
+		// paying that bonus to them. When the chosen group is wider than
+		// our own engagement envelope, anchor the squad on the group's
+		// nearer lateral END plus an overshoot past the tip -- the whole
+		// squad shifts one way and rolls the line up from its edge.
+		if ((circuit->GetTunable("apex_wrap_edge", 1.f) > 0.f) && (bestGroup >= 0)) {
+			const CEnemyManager::SEnemyGroup& wg = groups[bestGroup];
+			AIFloat3 wdir = wg.pos - pos;
+			if (wdir.SqLength2D() > 1.f) {
+				wdir.SafeNormalize2D();
+				const AIFloat3 wperp(-wdir.z, 0.f, wdir.x);
+				float lo = 0.f, hi = 0.f;
+				int counted = 0;
+				for (const ICoreUnit::Id eId : wg.units) {
+					CEnemyUnit* eu = circuit->GetEnemyManager()->GetEnemyUnit(eId);
+					if (eu == nullptr) {
+						continue;
+					}
+					const AIFloat3& ep = eu->GetPos();
+					const float t = wperp.x * (ep.x - wg.pos.x)
+							+ wperp.z * (ep.z - wg.pos.z);
+					lo = std::min(lo, t);
+					hi = std::max(hi, t);
+					++counted;
+				}
+				const float wrapMin = highestRange
+						* circuit->GetTunable("apex_wrap_min_w", 1.5f);
+				if ((counted >= 4) && (hi - lo > wrapMin)) {
+					const float myT = wperp.x * (pos.x - wg.pos.x)
+							+ wperp.z * (pos.z - wg.pos.z);
+					const float over = highestRange
+							* circuit->GetTunable("apex_wrap_over", 0.75f);
+					const float end = (myT >= 0.f) ? (hi + over) : (lo - over);
+					AIFloat3 wrap = wg.pos + wperp * end;
+					CTerrainManager::CorrectPosition(wrap);
+					position = wrap;
+					if (frame >= lastWrapLog + FRAMES_PER_SEC * 20) {
+						lastWrapLog = frame;
+						circuit->LOG("apex: wrap-edge t=%i w=%.0f end=%s "
+								"at=%.0f,%.0f n=%d", circuit->GetTeamId(),
+								hi - lo, (myT >= 0.f) ? "hi" : "lo",
+								wrap.x, wrap.z, counted);
+					}
+				}
+			}
+		}
 		diveCommit = bestDive;
 	}
 	// Feeds the accelerated merge check: a refusal pass this close to the bar

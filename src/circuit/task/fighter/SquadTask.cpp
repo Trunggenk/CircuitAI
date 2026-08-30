@@ -215,7 +215,12 @@ bool ISquadTask::TrySquadRetreat(CCircuitUnit* unit)
 	}
 	float woundedPower = unit->GetCircuitDef()->GetPower();
 	for (CCircuitUnit* u : cowards) {
-		if ((u != unit) && (u->GetCircuitDef() != nullptr)) {
+		// SLIVER-HP ONLY. Cowards now also hold rear-standers that entered at
+		// apex_coward_hp (~60%) with plenty of fight left; counting them here
+		// would trip the 35% vote on a squad that is merely scuffed.
+		if ((u != unit) && (u->GetCircuitDef() != nullptr)
+			&& (u->GetHealthPercent() <= u->GetCircuitDef()->GetRetreat()))
+		{
 			woundedPower += u->GetCircuitDef()->GetPower();
 		}
 	}
@@ -232,6 +237,71 @@ bool ISquadTask::TrySquadRetreat(CCircuitUnit* unit)
 	NoteSquadVote(circuit);
 	circuit->LOG("apex: squad retreat units=%d wounded=%.0f/%.0f",
 			(int)units.size(), woundedPower, attackPower);
+	decltype(units) tmpUnits = units;
+	for (CCircuitUnit* u : tmpUnits) {
+		manager->AssignTask(u, task);
+	}
+	return true;
+}
+
+// THE SQUAD'S TOTAL HP IS THE TRIGGER, NOT EACH UNIT'S (apexearth
+// 2026-08-28: "if the squad's total HP is less than some %, like if total
+// squad health below 50% or something we pull back. (not each individual
+// unit)" -- refining "whole squad should fall back if they're all too
+// low... stop them from getting targeted by having them move back"). The
+// per-unit thresholds sit at 8-50% hp, so a mauled squad never enters
+// TrySquadRetreat at all -- it stands and is focused down one unit at a
+// time. Checked per update: when the squad's power-weighted health falls
+// under apex_squad_fall_hp the squad leaves together on ONE retreat task,
+// same group pathing as the wounded-power vote. Power-weighted so a swarm
+// of scratched Ticks cannot outvote a dying Mammoth; cowards COUNT here,
+// unlike GetHealthScale -- his rule reads the HP that exists, not the HP
+// still pressing. Committed pushes, dives and charger deliveries keep
+// pressing, and defended home ground stands -- the same exemptions the
+// vote and the attack-break carry.
+bool ISquadTask::TryAllLowFallback()
+{
+	if ((units.size() < 2) || IsDiveCommit()) {
+		return false;
+	}
+	CCircuitAI* circuit = manager->GetCircuit();
+	if (circuit->IsCommitted()
+		|| ((leader != nullptr) && IsChargeDef(leader->GetCircuitDef())))
+	{
+		return false;
+	}
+	const float bar = circuit->GetTunable("apex_squad_fall_hp", 0.5f);
+	if (bar <= 0.f) {
+		return false;
+	}
+	float total = .0f;
+	float alive = .0f;
+	for (CCircuitUnit* u : units) {
+		const float power = u->GetCircuitDef()->GetPower();
+		total += power;
+		float hp = u->GetHealthPercent();
+		hp = std::max(.0f, std::min(1.f, hp));  // capture progress drives it negative
+		alive += power * hp;
+	}
+	if ((total <= .0f) || (alive >= total * bar)) {
+		return false;
+	}
+	if (leader != nullptr) {
+		const AIFloat3& lp = leader->GetPos(circuit->GetLastFrame());
+		const float defInfl = circuit->GetInflMap()->GetAllyDefendInflAt(lp);
+		if ((defInfl > INFL_EPS)
+			&& (defInfl >= circuit->GetInflMap()->GetEnemyInflAt(lp)
+				* circuit->GetTunable("apex_home_stand_ratio", 0.f)))
+		{
+			return false;  // defended home ground stands, as in the vote above
+		}
+	}
+	CRetreatTask* task = manager->EnqueueRetreat();
+	if (task == nullptr) {
+		return false;
+	}
+	circuit->LOG("apex: squad all-low fallback units=%d hp=%.2f bar=%.2f",
+			(int)units.size(), alive / total, bar);
 	decltype(units) tmpUnits = units;
 	for (CCircuitUnit* u : tmpUnits) {
 		manager->AssignTask(u, task);
@@ -1001,7 +1071,9 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 		// surround the enemy units, form a circle... ideally... our banishers
 		// would stay at a distance." Rows are already keyed by weapon range, so
 		// the second half of that is done; this is the first half.
-		const float maxDelta = (M_PI * ARC_SPAN) / kv.second.size();
+		const float maxDelta = (M_PI
+				* manager->GetCircuit()->GetTunable("apex_arc_span", ARC_SPAN))
+				/ kv.second.size();
 		// NOTE: float delta = asinf(cdef->GetRadius() / range);
 		//       but sin of a small angle is similar to that angle, omit asinf() call
 		float delta = (3.0f * (rowDef->GetRadius() + aoe)) / (range + DIV0_SLACK);
@@ -1071,14 +1143,43 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 		// overwhelming a static does not back off mid-dive.
 		AIFloat3 kiteFoe = -RgtVector;
 		float kiteFoeRange = 0.f;
+		bool kiteFoeStatic = false;
 		// 250, was 400: the 400 floor excluded every mid-range riot/skirm row
 		// (~300 range) from kiting entirely -- apexearth 2026-08-19: "us walk
 		// up close with units like thugs and maces, and they just get
 		// absolutely creamed." Melee/charge rows are already excluded by role.
 		const float kiteMin = manager->GetCircuit()->GetTunable("apex_kite_min_range", 250.f);
 		const float kiteFrac = manager->GetCircuit()->GetTunable("apex_kite_frac", 0.7f);
-		if ((kiteFrac > 0.f) && (kv.first >= kiteMin)
-			&& !IsChargeDef(rowDef) && !squadOverwhelms)
+		// apex: A COLOSSUS SHOOTS THE MOST VALUABLE THING IN REACH WHILE IT
+		// MARCHES. apexearth 2026-08-29: "They should focus on shooting the
+		// most valuable target within range while continuing to move into the
+		// enemy base." Engine auto-targeting picks by its own heuristics;
+		// set-target overrides it and unit_target_on_the_move keeps it live
+		// while the unit walks. Same class test as the colossus election.
+		CEnemyInfo* valFoe = nullptr;
+		float valFoeCost = 0.f;
+		// apex: FINISH THE WOUNDED (apexearth 2026-08-29, watching arena
+		// rounds: "have our units concentrate their firing on enemies which
+		// are lowest HP to 'finish' them sooner"). The row's set-target
+		// becomes the lowest-health enemy in its own reach, so the whole row
+		// focuses one kill at a time and enemy DPS leaves the field fastest.
+		// Colossi keep the richest-target rule instead.
+		// v3 (apexearth: "Focus fire should be a set target thing only, and
+		// overkill volleys should be thought about some"): a LIST of wounded
+		// targets, lowest absolute HP first, and the row's units are dealt
+		// across it in LETHAL DOSES -- each target gets ~enough dps-seconds
+		// to die, then the next unit aims at the next target. Set-target
+		// only; the engine still overrides when it cannot hit. v1/v2 dumped
+		// the whole row on one target and measured harmful (overkill).
+		const int FIN_N = 6;
+		CEnemyInfo* finCand[FIN_N] = { nullptr };
+		float finHp[FIN_N];
+		const bool rowColossus = (rowDef != nullptr)
+				&& (rowDef->IsCharger() || (rowDef->GetCostM()
+					>= manager->GetCircuit()->GetTunable("apex_super_cost", 7000.f)));
+		const bool kiteOk = (kiteFrac > 0.f) && (kv.first >= kiteMin)
+				&& !IsChargeDef(rowDef) && !squadOverwhelms;
+		if (kiteOk || rowColossus)
 		{
 			// Individual armed enemies, NOT group centroids -- but never a
 			// walk of the whole enemy registry: ghosts of units killed out
@@ -1108,19 +1209,52 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 						continue;
 					}
 					CCircuitDef* ed = e->GetCircuitDef();
-					if ((ed == nullptr) || !ed->IsAttacker() || ed->IsAbleToFly()) {
+					if ((ed == nullptr) || ed->IsAbleToFly()) {
 						continue;
 					}
 					const float sq = e->GetPos().SqDistance2D(testPos);
+					// The value pick has no armed filter: an enemy fusion in
+					// reach IS the most valuable target in range.
+					if (rowColossus && (sq < SQUARE(kv.first))
+						&& (ed->GetCostM() > valFoeCost))
+					{
+						valFoeCost = ed->GetCostM();
+						valFoe = e;
+					}
+					if (!rowColossus && (sq < SQUARE(kv.first))
+						&& (e->GetHealth() > 0.f))
+					{
+						const float maxH = (ed->GetHealth() > 1.f) ? ed->GetHealth() : 1.f;
+						if (e->GetHealth() / maxH < 0.9f) {
+							const float hp = e->GetHealth();
+							for (int fi = 0; fi < FIN_N; ++fi) {
+								if ((finCand[fi] == nullptr) || (hp < finHp[fi])) {
+									for (int fj = FIN_N - 1; fj > fi; --fj) {
+										finCand[fj] = finCand[fj - 1];
+										finHp[fj] = finHp[fj - 1];
+									}
+									finCand[fi] = e;
+									finHp[fi] = hp;
+									break;
+								}
+							}
+						}
+					}
+					if (!kiteOk || !ed->IsAttacker()) {
+						continue;
+					}
 					if (sq < bestSq) {
 						bestSq = sq;
 						kiteFoe = e->GetPos();
 						kiteFoeRange = ed->GetMaxRange();
+						kiteFoeStatic = !ed->IsMobile();
 					}
 				}
 			}
 		}
 
+		int finIdx = 0;
+		float finDosed = 0.f;
 		int iterNum = 0;
 		for (CCircuitUnit* unit : kv.second) {
 			if (unit->Blocker() != nullptr) {
@@ -1172,6 +1306,17 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 				// safe enough not to need a full retreat.
 				if (cowards.find(unit) != cowards.end()) {
 					r *= manager->GetCircuit()->GetTunable("apex_coward_rear_mod", COWARD_REAR_MOD);
+					// REAR BUT STILL FIRING for the 60%-band stander: 1.35x
+					// the 90% standoff is ~1.22x the row's own weapon range,
+					// a slot that contributes nothing -- and parking every
+					// sub-60% unit there halved the A/B's K/D ratio twice.
+					// Capped inside the row's reach it screens by angle and
+					// margin, not by silence. A sliver coward (at or under
+					// its own retreat bar) keeps the full out-of-range
+					// screen: at 8-15% hp survival outweighs its DPS.
+					if (unit->GetHealthPercent() > unit->GetCircuitDef()->GetRetreat()) {
+						r = std::min(r, kv.first * 0.98f);
+					}
 				}
 				AIFloat3 newPos(tPos.x + r * cosf(angle), tPos.y, tPos.z + r * sinf(angle));
 				CTerrainManager::CorrectPosition(newPos);
@@ -1205,14 +1350,54 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 							: kiteFrac;
 					const float openTo = siegeRow ? kv.first : (kv.first * rangeMod);
 					const float trigger = std::max(kv.first * rowFrac, foeReach);
-					const bool mayKite = siegeRow
-							? (foeReach < kv.first)
-							: (trigger < kv.first * rangeMod);
+					// apex: OUTRANGING THE FOE ALWAYS PERMITS THE BACKSTEP. The
+					// yo-yo guard compared foeReach (their range + the pad)
+					// against our SHAVED standoff (range * rangeMod), so a pad
+					// plus the 10% shave ate a real range advantage whole: a
+					// Rocko (475) was forbidden to kite a Stumpy (350) --
+					// 470 !< 427 -- and the row stood trading at the shorter
+					// gun's range (apexearth, watching exactly this fight:
+					// "we just stood there while they surrounded us... If we
+					// sense too many enemies can shoot at us we should
+					// immediately back up instead of waiting to be hit").
+					// Raw range against raw range is the yo-yo question; the
+					// old shaved test stays only as the fallback that lets a
+					// row back off from a short-armed chaser it cannot
+					// out-stand.
+					// apex: A TOWER CANNOT CHASE, SO IT IS ALWAYS KITED.
+					// Backing off from an equal-range MOBILE loses DPS to a
+					// chaser forever; backing beyond a STATIC's reach is a
+					// pure win -- it stops hitting us and gains nothing.
+					// Measured (winrate6, 16 games): 48,582 metal of our
+					// mobiles died to enemy towers, 58% of it MID-MAP --
+					// stock creeps forward porc and our rows stood inside
+					// tower reach trading with guns they could not
+					// outrange, because this veto only allowed the backstep
+					// when we outranged the foe. The dive exemption above
+					// (squadOverwhelms) still lets a committed overwhelm
+					// press through.
+					// apex: NEVER BACK TO WHERE OUR OWN GUNS ARE DRY.
+					// The open distance is max(standoff, their reach + pad);
+					// for a brawler whose range edge is smaller than the pad
+					// that spot is outside its OWN range -- the row walks
+					// backwards forever, firing nothing, chased the whole
+					// way. apexearth (arena, twice): "our amphibious tanks
+					// act very very cowardly" -- every amph brawler is a
+					// raider-role short gun, exactly this shape. A mobile-foe
+					// kite whose destination is dry is cancelled: stand and
+					// brawl. Statics keep the unconditional back-out -- the
+					// tower stops hitting us and gains nothing.
+					const float open = std::max(openTo, foeReach);
+					const bool wetKite = kiteFoeStatic || (open <= kv.first)
+							|| (manager->GetCircuit()->GetTunable("apex_brawl_stand", 1.f) <= 0.f);
+					const bool mayKite = wetKite && (siegeRow
+							? (kiteFoeStatic || (foeReach < kv.first))
+							: (kiteFoeStatic || (kiteFoeRange < kv.first)
+								|| (trigger < kv.first * rangeMod)));
 					if ((sqFoe < SQUARE(trigger)) && mayKite) {
 						AIFloat3 away = kcur - kiteFoe;
 						if (away.SqLength2D() > 1.f) {
 							away.SafeNormalize2D();
-							const float open = std::max(openTo, foeReach);
 							newPos = kcur + away * (open - sqrtf(sqFoe));
 							CTerrainManager::CorrectPosition(newPos);
 						}
@@ -1274,12 +1459,49 @@ void ISquadTask::Attack(const int frame, const bool isGround)
 				const bool staticCantReply = isStatic && (edef != nullptr)
 						&& (!edef->IsAttacker() || (edef->GetMaxRange() * 1.05f < r))
 						&& (threatMap->GetThreatAt(unit, newPos) <= THREAT_MIN);
-				if (staticCantReply
+				// apex: MICRO ONLY WHAT HAS A RANGE EDGE. The no-control arena
+				// diagnostic (3 seed-pairs): units stripped of our orders beat
+				// stock CONSISTENTLY (+0.047 mean, tight), while commanded
+				// units averaged the same with wild variance -- the ring adds
+				// nothing to a row that cannot out-stand its enemy, and costs
+				// DPS while it orbits. A row without a real range edge over
+				// the nearest armed foe hands the brawl to the engine (plain
+				// attack, auto-targeting); rows that outrange something keep
+				// the standoff machinery, which is their whole value.
+				const bool rowBrawls = (manager->GetCircuit()->GetTunable("apex_brawl_pass", 0.f) > 0.f)
+						&& !rowColossus && !kiteFoeStatic
+						&& (kiteFoeRange > 0.f)
+						&& (kv.first < kiteFoeRange + 60.f);
+				if (rowBrawls) {
+					unit->Attack(GetTarget(), isGround, frame + FRAMES_PER_SEC * 60);
+				} else if (staticCantReply
 					&& (manager->GetCircuit()->GetTunable("apex_static_plain_attack", 1.f) > 0.f))
 				{
 					unit->Attack(GetTarget(), isGround, frame + FRAMES_PER_SEC * 60);
 				} else {
 					unit->Attack(newPos, GetTarget(), targetTile, isGround, isStatic, frame + FRAMES_PER_SEC * 60);
+				}
+				// Attack() set-targeted the ELECTED target; for a colossus the
+				// preference is overridden to the richest thing in reach right
+				// now, while the move above keeps carrying it at the objective.
+				if (rowColossus && (valFoe != nullptr)) {
+					TRY_UNIT(manager->GetCircuit(), unit,
+						unit->CmdSetTarget(valFoe);
+					)
+				} else if ((finCand[0] != nullptr) && (finIdx < FIN_N)
+					&& (finCand[finIdx] != nullptr)
+					&& (manager->GetCircuit()->GetTunable("apex_focus_finish", 0.f) > 0.f))
+				{
+					TRY_UNIT(manager->GetCircuit(), unit,
+						unit->CmdSetTarget(finCand[finIdx]);
+					)
+					const float dose = ((rowDef != nullptr)
+							? rowDef->GetRawDps() : 10.f) * 2.5f;
+					finDosed += dose;
+					if (finDosed >= finHp[finIdx] * 1.15f) {
+						++finIdx;
+						finDosed = 0.f;
+					}
 				}
 			}
 

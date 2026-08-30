@@ -55,7 +55,13 @@ void CSReclaimTask::Start(CCircuitUnit* unit)
 void CSReclaimTask::Update()
 {
 	CCircuitAI* circuit = manager->GetCircuit();
-	if (circuit->GetEconomyManager()->IsMetalFull()) {
+	// A full bank used to abort this task -- and at a hosted game's +100%
+	// the bank is pinned full, so nano reclaim never ran at all ("nano
+	// turrets were able to reclaim prior..."). Space reclaim matters most
+	// exactly when metal is worthless; the emergency metal read is only the
+	// stock behavior at apex_nano_space_reclaim=0.
+	if (circuit->GetEconomyManager()->IsMetalFull()
+		&& (circuit->GetTunable("apex_nano_space_reclaim", 1.f) < 0.5f)) {
 		manager->AbortTask(this);
 	} else if ((++updCount % 4 == 0) && !units.empty()) {
 		// Check for damaged units

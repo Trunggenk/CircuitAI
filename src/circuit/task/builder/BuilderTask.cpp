@@ -13,6 +13,7 @@
 #include "map/InfluenceMap.h"
 #include "module/EconomyManager.h"
 #include "module/BuilderManager.h"
+#include "module/FactoryManager.h"
 #include "module/MilitaryManager.h"
 #include "resource/MetalManager.h"
 #include "resource/EnergyGrid.h"
@@ -390,6 +391,7 @@ bool IBuilderTask::Execute(CCircuitUnit* unit)
 		}
 
 		// Fallback to Guard/Assist/Patrol
+		SetDeathNote("no-site");
 		manager->FallbackTask(unit);
 		return false;
 	}
@@ -403,6 +405,7 @@ void IBuilderTask::OnUnitIdle(CCircuitUnit* unit)
 	} else if (buildFails <= TASK_RETRIES) {
 		RemoveAssignee(unit);
 	} else if (target == nullptr) {
+		SetDeathNote("retries");
 		// ABORTING NO LONGER POISONS THE GROUND.
 		//
 		// Upstream stamped a permanent blocker at buildPos here, with its own
@@ -434,10 +437,87 @@ void IBuilderTask::OnUnitDamaged(CCircuitUnit* unit, CEnemyInfo* attacker)
 		return;
 	}
 
+	// apex: STAND AND HEAL (apexearth: "a T1 con started a nano but then
+	// walked away from it to go try to heal a nano which was built in one of
+	// his allies bases... long walk for no big gain"). Retreat's destination
+	// is the crow-flies-closest haven -- a nano cluster, possibly across the
+	// map -- but a wounded builder already inside a cluster's assist reach is
+	// standing in the repair bay: the nanos heal it while it keeps building.
+	// Floored at apex_con_stand_floor: below it the fight here is being lost
+	// and retreat is about survival, not convenience (0.5 is the config's own
+	// fighter retreat line).
+	if (!cdef->IsRoleComm()
+		&& (circuit->GetTunable("apex_con_stand_heal", 1.f) > 0.5f)
+		&& (healthPerc > circuit->GetTunable("apex_con_stand_floor", 0.5f)))
+	{
+		CFactoryManager* facMgr = circuit->GetFactoryManager();
+		const AIFloat3& pos = unit->GetPos(frame);
+		const AIFloat3 hav = facMgr->GetClosestHaven(pos);
+		if (utils::is_valid(hav)
+			&& (pos.SqDistance2D(hav) < SQUARE(facMgr->GetAssistRange() * 0.9f)))
+		{
+			static int standLogFrame = 0;
+			if (frame >= standLogFrame) {
+				standLogFrame = frame + FRAMES_PER_SEC * 10;
+				circuit->LOG("apex: con-stand t=%i %s hp=%.2f -- healing where it works",
+						circuit->GetTeamId(), cdef->GetDef()->GetName(), healthPerc);
+			}
+			return;
+		}
+	}
+
+	// apex: THREAT-GATED SCRATCH RETREAT (apexearth ruling 2026-08-29, after
+	// 43 con-retreats in one Glacier game -- corck at hp 0.81 walking 2400-2900
+	// elmos while 42 mex elections became 12 mexes): above the stand floor a
+	// builder leaves only where danger is actually READ -- the known attacker's
+	// gun genuinely reaches this spot, or the threat map says something covers
+	// it. A stray splash or a ghost shell on safe own ground is not a reason
+	// to walk home. At or below the floor survival wins and it always goes.
+	if (!cdef->IsRoleComm()
+		&& (circuit->GetTunable("apex_con_scratch_gate", 1.f) > 0.5f)
+		&& (healthPerc > circuit->GetTunable("apex_con_stand_floor", 0.5f)))
+	{
+		const AIFloat3& pos = unit->GetPos(frame);
+		bool danger = false;
+		if ((attacker != nullptr) && (attacker->GetCircuitDef() != nullptr)
+			&& attacker->GetCircuitDef()->IsAttacker())
+		{
+			const float reach = attacker->GetCircuitDef()->GetMaxRange() + 300.f;
+			danger = attacker->GetPos().SqDistance2D(pos) < SQUARE(reach);
+		}
+		if (!danger) {
+			danger = circuit->GetThreatMap()->GetThreatAt(unit, pos) > THREAT_MIN;
+		}
+		if (!danger) {
+			static int scratchLogFrame = 0;
+			if (frame >= scratchLogFrame) {
+				scratchLogFrame = frame + FRAMES_PER_SEC * 10;
+				circuit->LOG("apex: con-scratch t=%i %s hp=%.2f -- no danger read, working on",
+						circuit->GetTeamId(), cdef->GetDef()->GetName(), healthPerc);
+			}
+			return;
+		}
+	}
+
 	CRetreatTask* task = manager->EnqueueRetreat();
 	manager->AssignTask(unit, task);
+	// apex: the walk is now visible -- one line per switch, with how far the
+	// chosen haven is, so "are we doing this a lot" reads from the infolog.
+	{
+		const AIFloat3& pos = unit->GetPos(frame);
+		const AIFloat3 hav = circuit->GetFactoryManager()->GetClosestHaven(pos);
+		// Position and the def under construction ride along so the audit can
+		// join this against the army snapshots: a build abandoned to damage
+		// with idle allied combat in reach is the misstep he wants flagged.
+		circuit->LOG("apex: con-retreat t=%i %s hp=%.2f walk=%.0f at=%.0f,%.0f job=%s",
+				circuit->GetTeamId(), cdef->GetDef()->GetName(), healthPerc,
+				utils::is_valid(hav) ? sqrtf(pos.SqDistance2D(hav)) : -1.f,
+				pos.x, pos.z,
+				(buildDef != nullptr) ? buildDef->GetDef()->GetName() : "-");
+	}
 
 	if (target == nullptr) {
+		SetDeathNote("hurt-retreat");
 		manager->AbortTask(this);  // Doesn't call RemoveAssignee
 	}
 }
@@ -447,6 +527,7 @@ void IBuilderTask::OnUnitDestroyed(CCircuitUnit* unit, CEnemyInfo* attacker)
 	RemoveAssignee(unit);
 	// NOTE: AbortTask usually does not call RemoveAssignee for each unit
 	if (((target == nullptr) || units.empty()) && !unit->IsMorphing()) {
+		SetDeathNote("builder-gone");
 		manager->AbortTask(this);
 	}
 }
@@ -569,6 +650,7 @@ bool IBuilderTask::Reevaluate(CCircuitUnit* unit)
 			|| ((ecoMgr->GetAvgEnergyIncome() < savedIncome.energy * 0.6f) && (ecoMgr->GetAvgEnergyIncome() * 2.0f < ecoMgr->GetEnergyPull())))
 		)
 	{
+		SetDeathNote("stall-abort");
 		manager->AbortTask(this);
 		return false;
 	}
@@ -652,9 +734,26 @@ void IBuilderTask::UpdatePath(CCircuitUnit* unit)
 	CCircuitDef* cdef = unit->GetCircuitDef();
 	const float range = cdef->GetBuildDistance();
 	const AIFloat3& endPos = GetPosition();
+	// A DEFENCE IS BUILT INTO THE THREAT IT ANSWERS. The safe-reach veto
+	// killed every front tower task ever created (s43: all bt=7 deaths
+	// why=unreach-safe; 960 front elections won, 0 towers built) -- the
+	// ground a tower is for is exactly the ground this refused. Defence
+	// types test pure reachability; everything else keeps the threat term.
+	const bool intoThreat = (buildType == BuildType::DEFENCE)
+			|| (buildType == BuildType::BUNKER)
+			|| (buildType == BuildType::BIG_GUN);
 	if ((target == nullptr)
-		&& !circuit->GetTerrainManager()->CanReachAtSafe(unit, endPos, range, cdef->GetPower()))
+		&& !(intoThreat
+			? circuit->GetTerrainManager()->CanReachAt(unit, endPos, range)
+			: circuit->GetTerrainManager()->CanReachAtSafe(unit, endPos, range, cdef->GetPower())))
 	{
+		// The chooser tested reachability from HOME (CanDefReach); this
+		// stricter per-unit test disagreeing is exactly the loop where a
+		// deterministic site is re-elected and aborted forever (t5's no-lab
+		// pocket, SI 8v8 s106). Mark the ground so ProbedSite steps around
+		// it on the next election.
+		circuit->NoteBuildBlocked(endPos);
+		SetDeathNote("unreach-safe");
 		manager->AbortTask(this);
 		return;
 	}

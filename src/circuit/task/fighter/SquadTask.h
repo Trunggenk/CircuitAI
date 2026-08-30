@@ -104,6 +104,8 @@ class CCircuitDef;
 
 class ISquadTask: public IFighterTask {
 protected:
+	// apex: the squad's sticky "finish the wounded" target id (0 = none).
+	int finishId = 0;
 	ISquadTask(ITaskModule* mgr, FightType type, float powerMod);
 public:
 	virtual ~ISquadTask();
@@ -113,6 +115,7 @@ public:
 
 	virtual void Merge(ISquadTask* task);
 	virtual bool TrySquadRetreat(CCircuitUnit* unit) override;
+	bool TryAllLowFallback();
 
 	// The last FindTarget pass's strongest strength-test refusal, as
 	// power/need. Measured (2026-08-16): median 0.82, 69% of refusal passes
