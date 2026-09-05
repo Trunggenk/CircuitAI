@@ -1,0 +1,102 @@
+name: Build CircuitAI (Windows - Recoil Engine)
+
+on:
+  push:
+    branches: [ barbarian-apex, master, main ]
+  pull_request:
+    branches: [ barbarian-apex, master, main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Native AI
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout CircuitAI (barbarian-apex)
+        uses: actions/checkout@v4
+        with:
+          path: CircuitAI
+
+      - name: Checkout Recoil Engine
+        uses: actions/checkout@v4
+        with:
+          repository: beyond-all-reason/spring
+          ref: master
+          path: recoil
+          submodules: recursive
+
+      - name: Checkout Recoil MinGW Dependencies
+        uses: actions/checkout@v4
+        with:
+          repository: beyond-all-reason/mingwlibs64
+          ref: master
+          path: recoil/mingwlibs64
+
+      - name: Setup MSYS2 and MinGW-w64 Toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-g++
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-SDL2
+            gawk
+            p7zip
+
+      - name: Inject CircuitAI into Recoil Engine
+        shell: msys2 {0}
+        run: |
+          echo "Replacing or inserting CircuitAI into Recoil AI/Skirmish/CircuitAI..."
+          rm -rf recoil/AI/Skirmish/CircuitAI
+          mkdir -p recoil/AI/Skirmish/CircuitAI
+          cp -r CircuitAI/* recoil/AI/Skirmish/CircuitAI/
+          ls -la recoil/AI/Skirmish/CircuitAI
+
+      - name: Configure CMake
+        shell: msys2 {0}
+        run: |
+          cd recoil
+          mkdir -p build
+          cd build
+          cmake .. -G "Ninja" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DAI_TYPES=NATIVE \
+            -DCIRCUIT_DEBUG=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+
+      - name: Compile CircuitAI Target
+        shell: msys2 {0}
+        run: |
+          cd recoil/build
+          ninja CircuitAI -v
+
+      - name: Package AI Artifacts
+        shell: msys2 {0}
+        run: |
+          mkdir -p package/CircuitAI/data
+          
+          # Find and copy generated SkirmishAI.dll
+          find recoil/build/AI/Skirmish/CircuitAI -name "SkirmishAI.dll" -exec cp -v {} package/CircuitAI/ \; || \
+          find recoil/AI/Skirmish/CircuitAI -name "SkirmishAI.dll" -exec cp -v {} package/CircuitAI/ \; || true
+          
+          # Copy AI data configs and scripts
+          cp -r CircuitAI/data/* package/CircuitAI/data/ 2>/dev/null || true
+          cp CircuitAI/VERSION package/CircuitAI/ 2>/dev/null || true
+          cp CircuitAI/README.md package/CircuitAI/ 2>/dev/null || true
+          cp CircuitAI/LICENSE package/CircuitAI/ 2>/dev/null || true
+          
+          echo "Listing packaged files:"
+          ls -laR package/CircuitAI
+
+      - name: Upload Windows AI Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CircuitAI-barbarian-apex-windows-x64
+          path: package/CircuitAI
