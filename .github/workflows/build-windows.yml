@@ -44,8 +44,7 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-SDL2
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-python
             gawk
             p7zip
 
@@ -56,6 +55,19 @@ jobs:
           rm -rf recoil/AI/Skirmish/CircuitAI
           mkdir -p recoil/AI/Skirmish/CircuitAI
           cp -r CircuitAI/* recoil/AI/Skirmish/CircuitAI/
+
+          echo "Disabling full engine & standalone tools to build AI only..."
+          python3 -c "
+          with open('recoil/CMakeLists.txt', 'r') as f:
+              lines = f.readlines()
+          with open('recoil/CMakeLists.txt', 'w') as f:
+              for line in lines:
+                  if line.strip() in ['add_subdirectory(tools)', 'add_subdirectory(doc)', 'add_subdirectory(cont)', 'add_subdirectory(rts)']:
+                      f.write('# ' + line)
+                  else:
+                      f.write(line)
+          "
+
           ls -la recoil/AI/Skirmish/CircuitAI
 
       - name: Configure CMake
@@ -68,8 +80,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DAI_TYPES=NATIVE \
             -DCIRCUIT_DEBUG=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DOPENSSL_ROOT_DIR=/mingw64
+            -DBUILD_SHARED_LIBS=OFF
 
       - name: Compile CircuitAI Target
         shell: msys2 {0}
