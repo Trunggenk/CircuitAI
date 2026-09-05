@@ -80,7 +80,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DAI_TYPES=NATIVE \
             -DCIRCUIT_DEBUG=OFF \
-            -DBUILD_SHARED_LIBS=OFF
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTING=OFF
 
       - name: Compile CircuitAI Target
         shell: msys2 {0}
