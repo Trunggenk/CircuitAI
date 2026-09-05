@@ -44,6 +44,8 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-curl
             gawk
             p7zip
 
@@ -54,6 +56,12 @@ jobs:
           rm -rf recoil/AI/Skirmish/CircuitAI
           mkdir -p recoil/AI/Skirmish/CircuitAI
           cp -r CircuitAI/* recoil/AI/Skirmish/CircuitAI/
+          
+          # Disable pr-downloader build if not needed
+          if [ -f recoil/tools/CMakeLists.txt ]; then
+            sed -i 's/add_subdirectory(pr-downloader)/# add_subdirectory(pr-downloader)/g' recoil/tools/CMakeLists.txt || true
+          fi
+
           ls -la recoil/AI/Skirmish/CircuitAI
 
       - name: Configure CMake
