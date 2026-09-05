@@ -25,8 +25,8 @@ local options = {
 	},
 	{ -- bool
 		key     = 'comm_merge',
-		name    = 'Merge neighbour BARbarIAns',
-		desc    = 'Merge spatially close BARbarIAn ally commanders',
+		name    = 'Merge neighbour Apex commanders',
+		desc    = 'Merge spatially close Apex ally commanders',
 		type    = 'bool',
 		section = 'performance',
 		def     = false,

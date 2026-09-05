@@ -48,12 +48,13 @@ jobs:
             gawk
             p7zip
 
-      - name: Inject CircuitAI into Recoil Engine
+      - name: Inject Apex AI into Recoil Engine
         shell: msys2 {0}
         run: |
-          echo "Replacing or inserting CircuitAI into Recoil AI/Skirmish/CircuitAI..."
-          rm -rf recoil/AI/Skirmish/CircuitAI
-          mkdir -p recoil/AI/Skirmish/CircuitAI
+          echo "Injecting Apex AI into Recoil AI/Skirmish/Apex and AI/Skirmish/CircuitAI..."
+          rm -rf recoil/AI/Skirmish/Apex recoil/AI/Skirmish/CircuitAI
+          mkdir -p recoil/AI/Skirmish/Apex recoil/AI/Skirmish/CircuitAI
+          cp -r CircuitAI/* recoil/AI/Skirmish/Apex/
           cp -r CircuitAI/* recoil/AI/Skirmish/CircuitAI/
 
           echo "Disabling full engine & standalone tools to build AI only..."
@@ -68,7 +69,7 @@ jobs:
                       f.write(line)
           "
 
-          ls -la recoil/AI/Skirmish/CircuitAI
+          ls -la recoil/AI/Skirmish/Apex
 
       - name: Configure CMake
         shell: msys2 {0}
@@ -83,32 +84,40 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_TESTING=OFF
 
-      - name: Compile CircuitAI Target
+      - name: Compile Apex Target
         shell: msys2 {0}
         run: |
           cd recoil/build
-          ninja CircuitAI -v
+          ninja Apex -v
 
       - name: Package AI Artifacts
         shell: msys2 {0}
         run: |
-          mkdir -p package/CircuitAI/data
+          mkdir -p package/Apex/stable/data
           
           # Find and copy generated SkirmishAI.dll
-          find recoil/build/AI/Skirmish/CircuitAI -name "SkirmishAI.dll" -exec cp -v {} package/CircuitAI/ \; || \
-          find recoil/AI/Skirmish/CircuitAI -name "SkirmishAI.dll" -exec cp -v {} package/CircuitAI/ \; || true
+          find recoil/build/AI/Skirmish/Apex -name "SkirmishAI.dll" -exec cp -v {} package/Apex/stable/ \; || \
+          find recoil/AI/Skirmish/Apex -name "SkirmishAI.dll" -exec cp -v {} package/Apex/stable/ \; || true
           
           # Copy AI data configs and scripts
-          cp -r CircuitAI/data/* package/CircuitAI/data/ 2>/dev/null || true
-          cp CircuitAI/VERSION package/CircuitAI/ 2>/dev/null || true
-          cp CircuitAI/README.md package/CircuitAI/ 2>/dev/null || true
-          cp CircuitAI/LICENSE package/CircuitAI/ 2>/dev/null || true
+          cp -r CircuitAI/data/* package/Apex/stable/data/ 2>/dev/null || true
+          cp CircuitAI/data/AIInfo.lua package/Apex/stable/ 2>/dev/null || true
+          cp CircuitAI/data/AIOptions.lua package/Apex/stable/ 2>/dev/null || true
+          cp CircuitAI/VERSION package/Apex/stable/ 2>/dev/null || true
+          cp CircuitAI/README.md package/Apex/stable/ 2>/dev/null || true
+          cp CircuitAI/LICENSE package/Apex/stable/ 2>/dev/null || true
           
-          echo "Listing packaged files:"
-          ls -laR package/CircuitAI
+          # Also place in root of package for convenience
+          cp package/Apex/stable/SkirmishAI.dll package/Apex/ 2>/dev/null || true
+          cp -r package/Apex/stable/data package/Apex/ 2>/dev/null || true
+          cp package/Apex/stable/AIInfo.lua package/Apex/ 2>/dev/null || true
+          cp package/Apex/stable/AIOptions.lua package/Apex/ 2>/dev/null || true
+          
+          echo "Listing packaged files in package/Apex:"
+          ls -laR package/Apex
 
       - name: Upload Windows AI Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CircuitAI-barbarian-apex-windows-x64
-          path: package/CircuitAI
+          name: Apex-windows-x64
+          path: package/Apex

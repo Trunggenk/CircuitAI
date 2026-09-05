@@ -16,7 +16,7 @@
 local infos = {
 	{
 		key    = 'shortName',
-		value  = 'Apex', -- AI name - !This comment is used for parsing!
+		value  = 'BARb', -- AI name - !This comment is used for parsing!
 		desc   = 'machine conform name.',
 	},
 	{
@@ -25,17 +25,17 @@ local infos = {
 	},
 	{
 		key    = 'name',
-		value  = 'Barbarian Apex',
+		value  = 'BARbarIAn',
 		desc   = 'human readable name.',
 	},
 	{
 		key    = 'description',
-		value  = 'Barbarian Apex AI for Beyond All Reason (Recoil Engine).',
+		value  = 'This AI is using the new C++ wrapper.',
 		desc   = 'tooltip.',
 	},
 	{
 		key    = 'url',
-		value  = 'https://github.com/apexearth/CircuitAI',
+		value  = 'https://springrts.com/wiki/AI:CppTestAI',
 		desc   = 'URL with more detailed info about the AI',
 	},
 	{
